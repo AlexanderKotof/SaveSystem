@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -10,6 +11,7 @@ using System.Text;
 namespace SaveDataGenerator
 {
     [Generator]
+    [SuppressMessage("ReSharper", "ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract")]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
         private static string GetLogPath()
@@ -120,9 +122,6 @@ namespace SaveDataGenerator
                 var typeInfo = ResolveType(m.Type, usings);
 
                 if (typeInfo.Skip) continue;
-
-                if (!string.IsNullOrEmpty(typeInfo.Namespace))
-                    usings.Add(typeInfo.Namespace);
 
                 var typeName = GetShortTypeName(typeInfo.TypeName, usings);
                 
@@ -276,15 +275,20 @@ namespace SaveDataGenerator
 
         private static TypeInfo ResolveType(ITypeSymbol type, HashSet<string> usings)
         {
-            var info = new TypeInfo();
+            if (type == null || type.Kind == SymbolKind.ErrorType)
+                return TypeInfo.SkipType();
             
-            info.Namespace = type.ContainingNamespace?.ToDisplayString();
+            var info = new TypeInfo();
+            usings.Add(type.ContainingNamespace?.ToDisplayString());
 
             if (type is not INamedTypeSymbol named)
             {
                 info.TypeName = type.ToDisplayString();
                 return info;
             }
+            
+            string defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
+            string typeName = named.Name;
             
             // --- вложенные SaveData
             if (HasSaveDataAttribute(named))
@@ -302,8 +306,27 @@ namespace SaveDataGenerator
                 return info;
             }
             
-            info.TypeName = GetSerializedType(type, usings, out bool isReactive);
-            info.IsReactive = isReactive;
+            // UniRx ReactiveProperty<T>
+            if ((defName.Contains("ReactiveProperty") || typeName.Contains("ReactiveProperty")) && named.TypeArguments.Length > 0)
+            {
+                var arg = named.TypeArguments[0];
+                if (arg == null || arg.Kind == SymbolKind.ErrorType)
+                    return TypeInfo.SkipType();
+      
+                var innerInfo = ResolveType(arg, usings);
+                info.TypeName = innerInfo.TypeName;
+                info.IsReactive = true;
+                return info;
+            }
+
+            // Кастомные реактивные (Vector3ReactiveProperty и т.д.)
+            if (typeName.EndsWith("ReactiveProperty"))
+            {
+                var baseType = named.BaseType;
+                return ResolveType(baseType!, usings);
+            }
+            
+            info.TypeName = named.ToDisplayString();
             info.Skip = string.IsNullOrEmpty(info.TypeName);
             return info;
         }
@@ -311,46 +334,6 @@ namespace SaveDataGenerator
         private static bool IsConfig(INamedTypeSymbol named)
         {
             return named.Name.Contains("Config") || named.ContainingNamespace.ToDisplayString().Contains("Configs");
-        }
-
-        private static string GetSerializedType(ITypeSymbol type, HashSet<string> usings, out bool isReactive)
-        {
-            isReactive = false;
-            
-            if (type == null || type.Kind == SymbolKind.ErrorType)
-                return string.Empty;
-
-            if (type is not INamedTypeSymbol named)
-                return type.ToDisplayString();
-            
-            
-            string defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
-            string typeName = named.Name;
-
-            // Пропускаем коллекции
-            if (defName.Contains("ReactiveCollection") || typeName.Contains("ReactiveCollection"))
-                return string.Empty;
-
-            // UniRx ReactiveProperty<T>
-            if ((defName.Contains("ReactiveProperty") || typeName.Contains("ReactiveProperty")) && named.TypeArguments.Length > 0)
-            {
-                var arg = named.TypeArguments[0];
-                if (arg == null || arg.Kind == SymbolKind.ErrorType) return string.Empty;
-                    
-                usings.Add(arg.ContainingNamespace.ToDisplayString());
-                isReactive = true;
-                return arg.ToDisplayString();
-            }
-
-            // Кастомные реактивные (Vector3ReactiveProperty и т.д.)
-            if (typeName.EndsWith("ReactiveProperty"))
-            {
-                isReactive = true;
-                usings.Add("UnityEngine");
-                return typeName.Replace("ReactiveProperty", "");
-            }
-
-            return type.ToDisplayString();
         }
 
         private static string GetApplyValue(TypeInfo info, string name)
@@ -374,11 +357,19 @@ namespace SaveDataGenerator
         private class TypeInfo
         {
             public string TypeName;
-            public string Namespace;
             public bool IsReactive;
             public bool IsNestedSaveData;
             public bool Skip;
             public bool IsConfig;
+
+
+            public static TypeInfo SkipType()
+            {
+                return new TypeInfo()
+                {
+                    Skip = true,
+                };
+            }
         }
     }
 }
