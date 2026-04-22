@@ -1,5 +1,4 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System;
@@ -45,189 +44,290 @@ namespace SaveDataGenerator
                 Console.WriteLine($"[SaveGen LogFail] {ex.Message} | {message}");
             }
         }
-
+        
         public void Initialize(GeneratorInitializationContext context) { }
 
         public void Execute(GeneratorExecutionContext context)
         {
-            Log("=== SAVE_DATA_GENERATOR: START ===");
-
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
-                var sourceText = tree.GetText().ToString();
-                if (!sourceText.Contains("[SaveData")) continue;
-
                 var semanticModel = context.Compilation.GetSemanticModel(tree);
-                var typeDeclarations = tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>();
+                var types = tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>();
 
-                foreach (var typeDecl in typeDeclarations)
+                foreach (var typeDecl in types)
                 {
                     var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
-                    if (typeSymbol is null) continue;
+                    if (typeSymbol == null) continue;
 
-                    bool hasAttr = typeSymbol.GetAttributes().Any(a =>
-                        a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
-                    if (!hasAttr) continue;
+                    if (!HasSaveDataAttribute(typeSymbol)) continue;
+                    
+                    Log($"Generating {typeSymbol.Name}...");
 
-                    Log($"[FOUND] Processing: {typeSymbol.Name} ({typeSymbol.ContainingNamespace})");
-
-                    try
+                    var code = Generate(typeSymbol);
+                    if (!string.IsNullOrWhiteSpace(code))
                     {
-                        string generatedCode = GenerateSaveData(typeSymbol, context);
+                        context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(code, Encoding.UTF8));
                         
-                        if (string.IsNullOrWhiteSpace(generatedCode))
-                        {
-                            Log($"[SKIP] No valid members for {typeSymbol.Name}. Generation skipped.");
-                            continue;
-                        }
-
-                        Log($"[GEN] === BEGIN {typeSymbol.Name}.SaveData.g.cs ===");
-                        Log(generatedCode);
-                        Log($"[GEN] === END {typeSymbol.Name}.SaveData.g.cs ===");
-
-                        context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(generatedCode, Encoding.UTF8));
-                        Log($"[SUCCESS] Added to compilation context.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"[ERROR] Generation failed for {typeSymbol.Name}: {ex}");
-                        context.ReportDiagnostic(Diagnostic.Create(
-                            new DiagnosticDescriptor("SDG_E001", "SaveData Gen Error", ex.ToString(), "SaveData", DiagnosticSeverity.Error, true),
-                            typeDecl.GetLocation()));
+                        Log($"Generated {typeSymbol.Name}.SaveData.g.cs\nContent:\n{code}");
                     }
                 }
             }
-            Log("=== SAVE_DATA_GENERATOR: END ===");
         }
 
-        private static string GenerateSaveData(INamedTypeSymbol typeSymbol, GeneratorExecutionContext context)
-        {
-            var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : typeSymbol.ContainingNamespace.ToDisplayString();
-            var dtoName = $"{typeSymbol.Name}SaveData";
+        // =========================
+        // CORE GENERATION
+        // =========================
 
-            // Фильтруем только public, не static, не const, не readonly
-            var members = typeSymbol.GetMembers()
-                .Where(m => (m is IFieldSymbol || m is IPropertySymbol) && m.DeclaredAccessibility == Accessibility.Public && !m.IsStatic)
-                .Select(m => (Symbol: m, Type: GetSafeType(m)))
-                .Where(x => x.Type != null && x.Type.Kind != SymbolKind.ErrorType) // 🔑 Защита от крача Unity
-                .Where(x => x.Type is not INamedTypeSymbol named || named.TypeKind != TypeKind.Error)
-                .Where(x => HasSaveDataAttribute(x.Symbol))
+        private static string Generate(INamedTypeSymbol type)
+        {
+            var dtoName = $"{type.Name}SaveData";
+            var ns = type.ContainingNamespace.IsGlobalNamespace ? null : type.ContainingNamespace.ToDisplayString();
+
+            var members = type.GetMembers()
+                .OfType<IPropertySymbol>()
+                .Where(HasSaveDataAttribute)
                 .ToList();
 
             if (members.Count == 0) return string.Empty;
 
-            var sb = new StringBuilder();
-            sb.AppendLine("// <auto-generated/>");
-            sb.AppendLine("#pragma warning disable CS0169, CS0649, CS8618");
-            
-            if (ns != null) sb.AppendLine($"namespace {ns}");
-            sb.AppendLine("{");
+            var usings = new HashSet<string>
+            {
+                "System"
+            };
 
-            // 1. DTO Struct
-            sb.AppendLine($"    public struct {dtoName}");
-            sb.AppendLine("    {");
+            var dtoFields = new List<string>();
+            var toSaveLines = new List<string>();
+            var applyLines = new List<string>();
+
             foreach (var m in members)
             {
-                var serializedType = GetSerializedType(m.Type!, out _);
-                if (string.IsNullOrEmpty(serializedType))
+                var typeInfo = ResolveType(m.Type);
+
+                if (typeInfo.Skip) continue;
+
+                if (!string.IsNullOrEmpty(typeInfo.Namespace))
+                    usings.Add(typeInfo.Namespace);
+
+                var typeName = GetShortTypeName(m.Type, usings); //typeInfo.TypeName;
+                dtoFields.Add($"public {typeName} {m.Name} {{ get; set; }}");
+
+                // ToSaveData
+                string readExpr = $"model.{m.Name}";
+
+                if (typeInfo.IsReactive)
+                    readExpr += ".Value";
+
+                if (typeInfo.IsNestedSaveData)
+                    readExpr += ".ToSaveData()";
+
+                toSaveLines.Add($"{m.Name} = {readExpr}");
+
+                // ApplySaveData
+                string writeExpr;
+
+                if (typeInfo.IsReactive)
                 {
-                    Log($"[WARN] Skipped {m.Symbol.Name} ({m.Type}) - unsupported type");
+                    writeExpr = $"model.{m.Name}.Value = {GetApplyValue(typeInfo, m.Name)};";
+                }
+                else if (m.SetMethod != null)
+                {
+                    writeExpr = $"model.{m.Name} = {GetApplyValue(typeInfo, m.Name)};";
+                }
+                else
+                {
+                    // get-only НЕ reactive → пропускаем
                     continue;
                 }
-                sb.AppendLine($"        public {serializedType} {m.Symbol.Name} {{ get; set; }}");
+
+                applyLines.Add(writeExpr);
             }
+
+            if (dtoFields.Count == 0) return string.Empty;
+
+            var sb = new StringBuilder();
+
+            // =========================
+            // USINGS
+            // =========================
+
+            foreach (var u in usings.OrderBy(x => x))
+                sb.AppendLine($"using {u};");
+
+            sb.AppendLine();
+            sb.AppendLine("// <auto-generated/>");
+            sb.AppendLine("#pragma warning disable");
+
+            if (ns != null)
+            {
+                sb.AppendLine($"namespace {ns}");
+                sb.AppendLine("{");
+            }
+
+            // =========================
+            // DTO
+            // =========================
+
+            sb.AppendLine($"public struct {dtoName}");
+            sb.AppendLine("{");
+
+            foreach (var f in dtoFields)
+                sb.AppendLine($"    {f}");
+
+            sb.AppendLine("}");
+
+            // =========================
+            // EXTENSIONS
+            // =========================
+
+            sb.AppendLine($"public static class {type.Name}SaveExtensions");
+            sb.AppendLine("{");
+
+            // ToSaveData
+            sb.AppendLine($"    public static {dtoName} ToSaveData(this {type.Name} model)");
+            sb.AppendLine("    {");
+            sb.AppendLine($"        return new {dtoName}");
+            sb.AppendLine("        {");
+
+            foreach (var l in toSaveLines)
+                sb.AppendLine($"            {l},");
+
+            sb.AppendLine("        };");
             sb.AppendLine("    }");
 
-            // 2. Extension Methods
-            sb.AppendLine($"    public static class {typeSymbol.Name}SaveExtensions");
+            // Apply
+            sb.AppendLine($"    public static void ApplySaveData(this {type.Name} model, {dtoName} data)");
             sb.AppendLine("    {");
-            
-            // ToSaveData
-            sb.AppendLine($"        public static {dtoName} ToSaveData(this {typeSymbol.Name} model)");
-            sb.AppendLine("        {");
-            sb.AppendLine($"            return new {dtoName}");
-            sb.AppendLine("            {");
-            foreach (var m in members)
-            {
-                var serializedType = GetSerializedType(m.Type!, out bool isReactive);
-                if (string.IsNullOrEmpty(serializedType)) continue;
-                sb.AppendLine($"                {m.Symbol.Name} = model.{m.Symbol.Name}{(isReactive ? ".Value" : "")},");
-            }
-            sb.AppendLine("            };");
-            sb.AppendLine("        }");
 
-            // ApplySaveData
-            sb.AppendLine($"        public static void ApplySaveData(this {typeSymbol.Name} model, {dtoName} data)");
-            sb.AppendLine("        {");
-            foreach (var m in members)
-            {
-                var serializedType = GetSerializedType(m.Type!, out bool isReactive);
-                if (string.IsNullOrEmpty(serializedType)) continue;
-                sb.AppendLine($"            model.{m.Symbol.Name}{(isReactive ? ".Value" : "")} = data.{m.Symbol.Name};");
-            }
-            sb.AppendLine("        }");
+            foreach (var l in applyLines)
+                sb.AppendLine($"        {l}");
+
             sb.AppendLine("    }");
 
             sb.AppendLine("}");
+
+            if (ns != null)
+                sb.AppendLine("}");
+
             sb.AppendLine("#pragma warning restore");
 
             return sb.ToString();
         }
-
-        private static ITypeSymbol? GetSafeType(ISymbol member) => member switch
-        {
-            IPropertySymbol p => p.Type,
-            IFieldSymbol f => f.Type,
-            _ => null
-        };
         
+        private static readonly Dictionary<ITypeSymbol, string> _namesCache = new();
+
+        private static string GetShortTypeName(ITypeSymbol typeInfo, HashSet<string> usings)
+        {
+            if (_namesCache.TryGetValue(typeInfo, out var name))
+            {
+                return name;
+            }
+            
+            string typeName = typeInfo.Name;
+            foreach (var ns in usings)
+            {
+                if (typeName.Contains(ns))
+                {
+                    typeName = typeName.Replace(ns, string.Empty);
+                }
+            }
+            _namesCache[typeInfo] = typeName;
+            return typeName;
+        }
+
+        // =========================
+        // TYPE RESOLUTION
+        // =========================
+
+        private static TypeInfo ResolveType(ITypeSymbol type)
+        {
+            var info = new TypeInfo();
+
+            if (type is not INamedTypeSymbol named)
+            {
+                info.TypeName = type.ToDisplayString();
+                return info;
+            }
+
+            var typeName = named.Name;
+            var fullName = named.ToDisplayString();
+
+            info.Namespace = named.ContainingNamespace?.ToDisplayString();
+            
+            //TODO: configs process
+            //if (named.)
+
+            // --- ReactiveProperty<T>
+            if (typeName.StartsWith("ReactiveProperty") && named.TypeArguments.Length == 1)
+            {
+                info.IsReactive = true;
+                var inner = named.TypeArguments[0];
+                var innerInfo = ResolveType(inner);
+
+                info.TypeName = innerInfo.TypeName;
+                info.IsNestedSaveData = innerInfo.IsNestedSaveData;
+                return info;
+            }
+
+            // --- кастомные reactive (Vector3ReactiveProperty)
+            if (typeName.EndsWith("ReactiveProperty"))
+            {
+                var valueProp = named.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
+                if (valueProp != null)
+                {
+                    info.IsReactive = true;
+                    
+                    var innerInfo = ResolveType(valueProp.Type);
+
+                    Log($"Resolved {innerInfo.TypeName} as Value of {typeName}");
+                    
+                    info.TypeName = innerInfo.TypeName;
+                    info.IsNestedSaveData = innerInfo.IsNestedSaveData;
+                    return info;
+                }
+                else
+                {
+                    Log($"Cant resolve Value Type of {typeName}");
+                }
+            }
+
+            // --- вложенные SaveData
+            if (HasSaveDataAttribute(named))
+            {
+                info.IsNestedSaveData = true;
+                info.TypeName = $"{named.Name}SaveData";
+                return info;
+            }
+
+            // --- обычный тип
+            info.TypeName = fullName;
+            return info;
+        }
+
+        private static string GetApplyValue(TypeInfo info, string name)
+        {
+            if (info.IsNestedSaveData)
+                return $"data.{name}.ToModel()"; // 👈 можно потом сгенерить обратный маппер
+
+            return $"data.{name}";
+        }
+
+        // =========================
+        // HELPERS
+        // =========================
+
         private static bool HasSaveDataAttribute(ISymbol symbol)
         {
             return symbol.GetAttributes().Any(a =>
                 a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
         }
-        
-        // private static bool IsSettable(ISymbol symbol) => symbol switch
-        // {
-        //     IPropertySymbol ps => ps.SetMethod != null,
-        //     IFieldSymbol fs => !fs.IsReadOnly && !fs.IsConst,
-        //     _ => false
-        // };
 
-        private static string GetSerializedType(ITypeSymbol type, out bool isReactive)
+        private class TypeInfo
         {
-            isReactive = false;
-            if (type == null || type.Kind == SymbolKind.ErrorType) return string.Empty;
-
-            if (type is INamedTypeSymbol named)
-            {
-                string defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
-                string typeName = named.Name;
-
-                // Пропускаем коллекции
-                if (defName.Contains("ReactiveCollection") || typeName.Contains("ReactiveCollection"))
-                    return string.Empty;
-
-                // UniRx ReactiveProperty<T>
-                if ((defName.Contains("ReactiveProperty") || typeName.Contains("ReactiveProperty")) && named.TypeArguments.Length > 0)
-                {
-                    var arg = named.TypeArguments[0];
-                    if (arg == null || arg.Kind == SymbolKind.ErrorType) return string.Empty;
-                    isReactive = true;
-                    return arg.ToDisplayString();
-                }
-
-                // Кастомные реактивные (Vector3ReactiveProperty и т.д.)
-                if (typeName.EndsWith("ReactiveProperty"))
-                {
-                    var valueProp = type.GetMembers("Value").OfType<IPropertySymbol>().FirstOrDefault();
-                    if (valueProp?.Type == null || valueProp.Type.Kind == SymbolKind.ErrorType) return string.Empty;
-                    isReactive = true;
-                    return valueProp.Type.ToDisplayString();
-                }
-            }
-
-            return type.ToDisplayString();
+            public string TypeName;
+            public string Namespace;
+            public bool IsReactive;
+            public bool IsNestedSaveData;
+            public bool Skip;
         }
     }
 }
