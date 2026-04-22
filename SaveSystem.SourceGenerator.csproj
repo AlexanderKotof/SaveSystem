@@ -10,10 +10,4 @@
       <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.1" />
     </ItemGroup>
 
-    <ItemGroup>
-      <None Update="NewBeeDev.SaveSystem.SourceGenerator.asmdef">
-        <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-      </None>
-    </ItemGroup>
-
 </Project>

@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -12,15 +13,45 @@ namespace SaveDataGenerator
     [Generator]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
-        private static readonly HashSet<string> BannedNamespaces = new()
+        private static string GetLogPath()
         {
-            "UnityEngine", "System", "UniRx", "Newtonsoft", "Cysharp", "VContainer", "Unity", "TMPro"
-        };
+            try
+            {
+                // Пытаемся писать в Assets/Generated (относительно корня проекта)
+                return Path.GetFullPath(Path.Combine("Temp", "Generated", "SourceGen_Debug.log"));
+            }
+            catch
+            {
+                // Фолбэк в TEMP, если права или путь недоступны
+                return Path.Combine(Path.GetTempPath(), "Unity_SourceGen_Debug.log");
+            }
+        }
+
+        private static void Log(string message)
+        {
+            try
+            {
+                var logPath = GetLogPath();
+                var dir = Path.GetDirectoryName(logPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
+                Console.WriteLine(message);
+            }
+            catch (Exception ex)
+            {
+                // Если даже файл не пишется, выводим в стандартный вывод (попадает в Editor.log)
+                Console.WriteLine($"[SaveGen LogFail] {ex.Message} | {message}");
+            }
+        }
 
         public void Initialize(GeneratorInitializationContext context) { }
 
         public void Execute(GeneratorExecutionContext context)
         {
+            Log("=== SAVE_DATA_GENERATOR: START ===");
+
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
                 var sourceText = tree.GetText().ToString();
@@ -33,44 +64,40 @@ namespace SaveDataGenerator
                 {
                     var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
                     if (typeSymbol is null) continue;
-                    if (IsNamespaceBanned(typeSymbol.ContainingNamespace)) continue;
 
                     bool hasAttr = typeSymbol.GetAttributes().Any(a =>
                         a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
                     if (!hasAttr) continue;
 
+                    Log($"[FOUND] Processing: {typeSymbol.Name} ({typeSymbol.ContainingNamespace})");
+
                     try
                     {
                         string generatedCode = GenerateSaveData(typeSymbol, context);
-                        if (!string.IsNullOrEmpty(generatedCode))
+                        
+                        if (string.IsNullOrWhiteSpace(generatedCode))
                         {
-                            // 🔍 Вывод полного текста файла в консоль / Editor.log
-                            Console.WriteLine($"[SaveDataGen] === GENERATED: {typeSymbol.Name}.SaveData.g.cs ===");
-                            Console.WriteLine(generatedCode);
-                            Console.WriteLine("[SaveDataGen] ================================================");
-
-                            context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(generatedCode, Encoding.UTF8));
+                            Log($"[SKIP] No valid members for {typeSymbol.Name}. Generation skipped.");
+                            continue;
                         }
+
+                        Log($"[GEN] === BEGIN {typeSymbol.Name}.SaveData.g.cs ===");
+                        Log(generatedCode);
+                        Log($"[GEN] === END {typeSymbol.Name}.SaveData.g.cs ===");
+
+                        context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(generatedCode, Encoding.UTF8));
+                        Log($"[SUCCESS] Added to compilation context.");
                     }
                     catch (Exception ex)
                     {
+                        Log($"[ERROR] Generation failed for {typeSymbol.Name}: {ex}");
                         context.ReportDiagnostic(Diagnostic.Create(
                             new DiagnosticDescriptor("SDG_E001", "SaveData Gen Error", ex.ToString(), "SaveData", DiagnosticSeverity.Error, true),
-                            Location.None));
+                            typeDecl.GetLocation()));
                     }
                 }
             }
-        }
-
-        private static bool IsNamespaceBanned(INamespaceSymbol ns)
-        {
-            var current = ns;
-            while (current != null && !current.IsGlobalNamespace)
-            {
-                if (BannedNamespaces.Contains(current.Name)) return true;
-                current = current.ContainingNamespace;
-            }
-            return false;
+            Log("=== SAVE_DATA_GENERATOR: END ===");
         }
 
         private static string GenerateSaveData(INamedTypeSymbol typeSymbol, GeneratorExecutionContext context)
@@ -78,12 +105,13 @@ namespace SaveDataGenerator
             var ns = typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : typeSymbol.ContainingNamespace.ToDisplayString();
             var dtoName = $"{typeSymbol.Name}SaveData";
 
-            // Фильтрация членов: только public, не static, без ErrorType
+            // Фильтруем только public, не static, не const, не readonly
             var members = typeSymbol.GetMembers()
                 .Where(m => (m is IFieldSymbol || m is IPropertySymbol) && m.DeclaredAccessibility == Accessibility.Public && !m.IsStatic)
                 .Select(m => (Symbol: m, Type: GetSafeType(m)))
-                .Where(x => x.Type != null && x.Type.Kind != SymbolKind.ErrorType)
-                .Where(x => IsSettable(x.Symbol))
+                .Where(x => x.Type != null && x.Type.Kind != SymbolKind.ErrorType) // 🔑 Защита от крача Unity
+                .Where(x => x.Type is not INamedTypeSymbol named || named.TypeKind != TypeKind.Error)
+                .Where(x => HasSaveDataAttribute(x.Symbol))
                 .ToList();
 
             if (members.Count == 0) return string.Empty;
@@ -100,8 +128,12 @@ namespace SaveDataGenerator
             sb.AppendLine("    {");
             foreach (var m in members)
             {
-                var serializedType = GetSerializedType(m.Type, out bool isReactive);
-                if (string.IsNullOrEmpty(serializedType)) continue;
+                var serializedType = GetSerializedType(m.Type!, out _);
+                if (string.IsNullOrEmpty(serializedType))
+                {
+                    Log($"[WARN] Skipped {m.Symbol.Name} ({m.Type}) - unsupported type");
+                    continue;
+                }
                 sb.AppendLine($"        public {serializedType} {m.Symbol.Name} {{ get; set; }}");
             }
             sb.AppendLine("    }");
@@ -117,7 +149,7 @@ namespace SaveDataGenerator
             sb.AppendLine("            {");
             foreach (var m in members)
             {
-                var serializedType = GetSerializedType(m.Type, out bool isReactive);
+                var serializedType = GetSerializedType(m.Type!, out bool isReactive);
                 if (string.IsNullOrEmpty(serializedType)) continue;
                 sb.AppendLine($"                {m.Symbol.Name} = model.{m.Symbol.Name}{(isReactive ? ".Value" : "")},");
             }
@@ -129,7 +161,7 @@ namespace SaveDataGenerator
             sb.AppendLine("        {");
             foreach (var m in members)
             {
-                var serializedType = GetSerializedType(m.Type, out bool isReactive);
+                var serializedType = GetSerializedType(m.Type!, out bool isReactive);
                 if (string.IsNullOrEmpty(serializedType)) continue;
                 sb.AppendLine($"            model.{m.Symbol.Name}{(isReactive ? ".Value" : "")} = data.{m.Symbol.Name};");
             }
@@ -148,13 +180,19 @@ namespace SaveDataGenerator
             IFieldSymbol f => f.Type,
             _ => null
         };
-
-        private static bool IsSettable(ISymbol symbol) => symbol switch
+        
+        private static bool HasSaveDataAttribute(ISymbol symbol)
         {
-            IPropertySymbol ps => ps.SetMethod != null,
-            IFieldSymbol fs => !fs.IsReadOnly && !fs.IsConst,
-            _ => false
-        };
+            return symbol.GetAttributes().Any(a =>
+                a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
+        }
+        
+        // private static bool IsSettable(ISymbol symbol) => symbol switch
+        // {
+        //     IPropertySymbol ps => ps.SetMethod != null,
+        //     IFieldSymbol fs => !fs.IsReadOnly && !fs.IsConst,
+        //     _ => false
+        // };
 
         private static string GetSerializedType(ITypeSymbol type, out bool isReactive)
         {
@@ -166,7 +204,7 @@ namespace SaveDataGenerator
                 string defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
                 string typeName = named.Name;
 
-                // Пропускаем коллекции (пока не поддерживаем сериализацию)
+                // Пропускаем коллекции
                 if (defName.Contains("ReactiveCollection") || typeName.Contains("ReactiveCollection"))
                     return string.Empty;
 
