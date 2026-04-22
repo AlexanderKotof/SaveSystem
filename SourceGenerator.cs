@@ -145,6 +145,12 @@ namespace SaveDataGenerator
                 // ApplySaveData
                 string writeExpr;
 
+                if (typeInfo.IsNestedSaveData)
+                {
+                    //TODO: skip for now 
+                    continue;
+                }
+                
                 if (typeInfo.IsReactive)
                 {
                     writeExpr = $"model.{m.Name}.Value = {GetApplyValue(typeInfo, dtoPropName)};";
@@ -153,7 +159,7 @@ namespace SaveDataGenerator
                 {
                     //Reading only, left processing configs to higher layer
                     Log($"Config found {m.Name}!");
-                    //writeExpr = $"model.{m.Name} = _resolver.Resolve({GetApplyValue(typeInfo, m.Name)});";
+                    // writeExpr = $"model.{m.Name} = _resolver.Resolve({GetApplyValue(typeInfo, m.Name)});";
                     continue;
                 }
                 else if (m.SetMethod != null)
@@ -163,7 +169,7 @@ namespace SaveDataGenerator
                 else
                 {
                     // get-only НЕ reactive → пропускаем
-                    Log($"Trying to update get-only property {m.Name}!");
+                    Log($"Trying to update get-only non reactive property {m.Name}!");
                     continue;
                 }
 
@@ -290,6 +296,11 @@ namespace SaveDataGenerator
             string defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
             string typeName = named.Name;
             
+            // Пропускаем коллекции
+            if (defName.Contains("ReactiveCollection") || typeName.Contains("ReactiveCollection") || 
+                defName.Contains("ReactiveDictionary") || typeName.Contains("ReactiveDictionary"))
+                return TypeInfo.SkipType();
+            
             // --- вложенные SaveData
             if (HasSaveDataAttribute(named))
             {
@@ -314,9 +325,8 @@ namespace SaveDataGenerator
                     return TypeInfo.SkipType();
       
                 var innerInfo = ResolveType(arg, usings);
-                info.TypeName = innerInfo.TypeName;
-                info.IsReactive = true;
-                return info;
+                innerInfo.IsReactive = true;
+                return innerInfo;
             }
 
             // Кастомные реактивные (Vector3ReactiveProperty и т.д.)
@@ -339,7 +349,7 @@ namespace SaveDataGenerator
         private static string GetApplyValue(TypeInfo info, string name)
         {
             if (info.IsNestedSaveData)
-                return $"data.{name}.ToModel()"; // 👈 можно потом сгенерить обратный маппер
+                return $"data.{name}.ToModel()"; // нужно потом сгенерить обратный маппер
 
             return $"data.{name}";
         }
