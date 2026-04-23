@@ -217,7 +217,7 @@ namespace SaveDataGenerator
             // =========================
 
             sb.AppendLine("[Serializable]");
-            sb.AppendLine($"public struct {dtoName}");
+            sb.AppendLine($"public struct {dtoName} : ISaveData");
             sb.AppendLine("{");
 
             foreach (var f in dtoFields)
