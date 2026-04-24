@@ -152,7 +152,7 @@ namespace SaveDataGenerator
 
             if (typeInfo.Skip) return;
 
-            var typeName = GetShortTypeName(typeInfo.TypeName, usings);
+            var typeName = GetShortTypeName(typeInfo, usings);
                 
             var dtoPropName = typeInfo.IsConfig ? m.Name + "Id" : m.Name;
             dtoFields.Add($"public {typeName} {dtoPropName} {{ get; set; }}");
@@ -259,6 +259,7 @@ namespace SaveDataGenerator
             // ToSaveData
             sb.AppendLine($"    public static {dtoName} ToSaveData(this {type.Name} model)");
             sb.AppendLine("    {");
+            sb.AppendLine("         if (model == null) return default;");
             sb.AppendLine($"        return new {dtoName}");
             sb.AppendLine("        {");
 
@@ -271,7 +272,7 @@ namespace SaveDataGenerator
             // Apply
             sb.AppendLine($"    public static void ApplySaveData(this {type.Name} model, {dtoName} data)");
             sb.AppendLine("    {");
-
+            sb.AppendLine("         if (model == null) return;");
             foreach (var l in applyLines)
                 sb.AppendLine($"        {l}");
 
@@ -289,26 +290,27 @@ namespace SaveDataGenerator
 
         private static readonly Dictionary<string, string> _namesCache = new();
 
-        private static string GetShortTypeName(string typeInfo, HashSet<string> usings)
+        private static string GetShortTypeName(TypeInfo typeInfo, HashSet<string> usings)
         {
-            if (_namesCache.TryGetValue(typeInfo, out var name))
+            var typeName = typeInfo.TypeName;
+            
+            if (_namesCache.TryGetValue(typeName, out var name))
             {
                 return name;
             }
             
-            string typeName = typeInfo;
             foreach (var ns in usings)
             {
                 if (Equals(ns, "System"))
                     continue;
                 
-                string replce = ns + ".";
-                if (typeName.Contains(replce))
+                string replace = ns + ".";
+                if (typeName.Contains(replace))
                 {
-                    typeName = typeName.Replace(replce, string.Empty);
+                    typeName = typeName.Replace(replace, string.Empty);
                 }
             }
-            _namesCache[typeInfo] = typeName;
+            _namesCache[typeName] = typeName;
             return typeName;
         }
 
@@ -338,7 +340,9 @@ namespace SaveDataGenerator
                 defName.Contains("ReactiveDictionary") || typeName.Contains("ReactiveDictionary"))
                 return TypeInfo.SkipType();
             
-            // --- вложенные SaveData
+            // --- вложенные SaveData 
+            
+            //TODO: check for apply posibility
             if (HasSaveDataAttribute(named))
             {
                 info.IsNestedSaveData = true;
@@ -395,11 +399,9 @@ namespace SaveDataGenerator
         // HELPERS
         // =========================
 
-        private static bool HasSaveDataAttribute(ISymbol symbol)
-        {
-            return symbol.GetAttributes().Any(a =>
+        private static bool HasSaveDataAttribute(ISymbol symbol) =>
+            symbol.GetAttributes().Any(a =>
                 a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
-        }
 
         private class TypeInfo
         {
@@ -408,15 +410,8 @@ namespace SaveDataGenerator
             public bool IsNestedSaveData;
             public bool Skip;
             public bool IsConfig;
-
-
-            public static TypeInfo SkipType()
-            {
-                return new TypeInfo()
-                {
-                    Skip = true,
-                };
-            }
+            
+            public static TypeInfo SkipType() => new() { Skip = true };
         }
     }
 }
