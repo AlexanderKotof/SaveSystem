@@ -51,7 +51,7 @@ namespace SaveDataGenerator
 
         public void Execute(GeneratorExecutionContext context)
         {
-            var created = new HashSet<INamedTypeSymbol>();
+            var created = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
             
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
@@ -61,11 +61,14 @@ namespace SaveDataGenerator
                 foreach (var typeDecl in types)
                 {
                     var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
-                    if (typeSymbol == null) continue;
+                    if (typeSymbol == null)
+                        continue;
 
-                    if (!HasSaveDataAttribute(typeSymbol)) continue;
+                    if (!HasSaveDataAttribute(typeSymbol))
+                        continue;
                     
-                    if (!created.Add(typeSymbol)) continue;
+                    if (!created.Add(typeSymbol))
+                        continue;
 
                     Log($"Generating {typeSymbol.Name}...");
 
@@ -100,11 +103,25 @@ namespace SaveDataGenerator
         {
             var dtoName = $"{type.Name}SaveData";
             var ns = type.ContainingNamespace.IsGlobalNamespace ? null : type.ContainingNamespace.ToDisplayString();
-
+            
             var members = type.GetMembers()
                 .OfType<IPropertySymbol>()
                 .Where(HasSaveDataAttribute)
                 .ToList();
+
+            //Collecting props from parent types
+            var iterate = type;
+            while (iterate.BaseType != null)
+            {
+                iterate = iterate.BaseType;
+
+                var ms = iterate.GetMembers()
+                    .OfType<IPropertySymbol>()
+                    .Where(HasSaveDataAttribute)
+                    .ToList();
+                
+                members.AddRange(ms);
+            }
 
             if (members.Count == 0) return string.Empty;
 
@@ -119,7 +136,7 @@ namespace SaveDataGenerator
 
             foreach (var m in members)
             {
-                CollectTypesData(m, usings, dtoFields, toSaveLines, applyLines);
+                CollectTypeContent(m, usings, dtoFields, toSaveLines, applyLines);
             }
 
             if (dtoFields.Count == 0) 
@@ -128,7 +145,7 @@ namespace SaveDataGenerator
             return GenerateOutput(type, usings, ns, dtoName, dtoFields, toSaveLines, applyLines);
         }
 
-        private static void CollectTypesData(IPropertySymbol m, HashSet<string> usings, List<string> dtoFields, List<string> toSaveLines,
+        private static void CollectTypeContent(IPropertySymbol m, HashSet<string> usings, List<string> dtoFields, List<string> toSaveLines,
             List<string> applyLines)
         {
             var typeInfo = ResolveType(m.Type, usings);
@@ -155,37 +172,44 @@ namespace SaveDataGenerator
             toSaveLines.Add($"{dtoPropName} = {readExpr}");
 
             // ApplySaveData
-            string writeExpr;
+            string writeExpr = GetWriteExpression(m, typeInfo, dtoPropName);
 
+            if (!string.IsNullOrEmpty(writeExpr))
+            {
+                applyLines.Add(writeExpr);
+            }
+        }
+
+        private static string GetWriteExpression(IPropertySymbol m, TypeInfo typeInfo, string dtoPropName)
+        {
             if (typeInfo.IsNestedSaveData)
             {
-                //TODO: skip for now 
-                return;
-            }
-                
-            if (typeInfo.IsReactive)
-            {
-                writeExpr = $"model.{m.Name}.Value = {GetApplyValue(typeInfo, dtoPropName)};";
-            }
-            else if (typeInfo.IsConfig)
-            {
-                //Reading only, left processing configs to higher layer
-                Log($"Config found {m.Name}!");
-                // writeExpr = $"model.{m.Name} = _resolver.Resolve({GetApplyValue(typeInfo, m.Name)});";
-                return;
-            }
-            else if (m.SetMethod != null)
-            {
-                writeExpr = $"model.{m.Name} = {GetApplyValue(typeInfo, dtoPropName)};";
-            }
-            else
-            {
-                // get-only НЕ reactive → пропускаем
-                Log($"Trying to update get-only non reactive property {m.Name}!");
-                return;
+                //TODO: skip for now
+                return $"//*** Nested Data Exist: model.{m.Name} = {GetApplyValue(typeInfo, dtoPropName)};";
             }
 
-            applyLines.Add(writeExpr);
+            if (typeInfo.IsReactive)
+            {
+                return $"model.{m.Name}.Value = {GetApplyValue(typeInfo, dtoPropName)};";
+            }
+            
+            if (typeInfo.IsConfig)
+            {
+                //Reading only, left processing configs to higher layer
+                Log($"Config found {m.Name}, skipping!");
+                
+                // return $"model.{m.Name} = _resolver.Resolve({GetApplyValue(typeInfo, m.Name)});";
+                return string.Empty;
+            }
+
+            if (m.SetMethod is { DeclaredAccessibility: Accessibility.Public })
+            {
+                return $"model.{m.Name} = {GetApplyValue(typeInfo, dtoPropName)};";
+            }
+
+            // get-only НЕ reactive → пропускаем
+            Log($"Trying to update get-only non reactive property {m.Name}!");
+            return $"//*** Data Exist: model.{m.Name} = {GetApplyValue(typeInfo, dtoPropName)}; (Not writable)";
         }
 
         private static string GenerateOutput(INamedTypeSymbol type, HashSet<string> usings, string? ns, string dtoName, List<string> dtoFields,
