@@ -175,15 +175,20 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsCollection )
             {
-                var elemApply = GetElementApplyExpr(typeInfo.CollectionElementType!, modelExpr, dataExpr);
-                return $"if ({dataExpr} != null)\n\t\t{{\n" +
-                       $"\t\t\tif ({modelExpr} is ICollection<{typeInfo.CollectionElementType!.ModelTypeName}> col)\n" +
-                       @"			{
-                col.Clear();
-" +
-                       $"\t\t\t\tforeach (var x in {dataExpr}) col.Add({elemApply});\n" +
-                       @"            }
-        }";  
+                //TODO: can't be implemented right now
+                // more complex logic required
+                return $"//*** Data Collection: {m.Name}";
+                
+//                 var elemApply = GetElementApplyExpr(typeInfo.CollectionElementType!, modelExpr, dataExpr);
+//                 return $"if ({dataExpr} != null)\n\t\t{{\n" +
+//                        $"\t\t\tif ({modelExpr} is ICollection<{typeInfo.CollectionElementType!.ModelTypeName}> col)\n" +
+//                        @"			{
+//                 col.Clear();
+// " +
+//                        $"\t\t\t\tforeach (var x in {dataExpr}) col.Add({elemApply});\n" +
+//                        @"            }
+//         }";  
+
 //             else
 //             {
 //                 // Fallback for non-ICollection properties
