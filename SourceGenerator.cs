@@ -98,6 +98,11 @@ namespace SaveDataGenerator
                 .OfType<IPropertySymbol>()
                 .Where(HasSaveDataAttribute)
                 .ToList();
+            
+            //TODO:
+            // members.AddRange(type.GetMembers()
+            //     .OfType<IFieldSymbol>()
+            //     .Where(HasSaveDataAttribute));
 
             //Collecting props from parent types
             var iterate = type;
