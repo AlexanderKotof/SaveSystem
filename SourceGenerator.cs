@@ -139,7 +139,7 @@ namespace SaveDataGenerator
 
             // 1. Поле в DTO
             dtoFields.Add(typeInfo.IsCollection 
-                ? $"public List<{typeInfo.CollectionElementType!.DtoTypeName}> {dtoPropName} {{ get; set; }}" 
+                ? $"public {typeInfo.CollectionElementType!.DtoTypeName}[] {dtoPropName} {{ get; set; }}" 
                 : $"public {typeInfo.DtoTypeName} {dtoPropName} {{ get; set; }}");
 
             // 2. ToSaveData
@@ -151,7 +151,7 @@ namespace SaveDataGenerator
             if (typeInfo.IsCollection)
             {
                 var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!);
-                toSaveLines.Add($"{dtoPropName} = {readExpr}?.Select(x => {elemMap}).ToList() ?? new List<{typeInfo.CollectionElementType!.DtoTypeName}>()");
+                toSaveLines.Add($"{dtoPropName} = {readExpr}?.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
             }
             else
             {
@@ -332,6 +332,8 @@ namespace SaveDataGenerator
                     info.ModelTypeName = named.ToDisplayString();
                     return info;
                 }
+                
+                //TODO: проверка на словари
                 
                 // Проверка на UniRx ReactiveProperty<T>
                 var defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
