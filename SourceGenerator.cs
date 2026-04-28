@@ -4,7 +4,6 @@ using Microsoft.CodeAnalysis.Text;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -14,36 +13,7 @@ namespace SaveDataGenerator
     [SuppressMessage("ReSharper", "ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract")]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
-        private static string GetLogPath()
-        {
-            try
-            {
-                return Path.GetFullPath(Path.Combine("Temp", "Generated", "SourceGen_Debug.log"));
-            }
-            catch
-            {
-                return Path.Combine(Path.GetTempPath(), "Unity_SourceGen_Debug.log");
-            }
-        }
-
-        private static void Log(string message)
-        {
-            try
-            {
-                var logPath = GetLogPath();
-                var dir = Path.GetDirectoryName(logPath);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
-
-                File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss.fff}] {message}{Environment.NewLine}");
-                Console.WriteLine(message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[SaveGen LogFail] {ex.Message} | {message}");
-            }
-        }
-
+        private AttributeSyntax? _saveDataAttribute;
         public void Initialize(GeneratorInitializationContext context) { }
 
         public void Execute(GeneratorExecutionContext context)
@@ -56,8 +26,6 @@ namespace SaveDataGenerator
             {
                 var semanticModel = context.Compilation.GetSemanticModel(tree);
                 var types = tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>();
-                
-               
 
                 foreach (var typeDecl in types)
                 {
@@ -66,7 +34,7 @@ namespace SaveDataGenerator
                     if (!HasSaveDataAttribute(typeSymbol)) continue;
                     if (!created.Add(typeSymbol)) continue;
 
-                    Log($"Generating {typeSymbol.Name}...");
+                    Logger.Log($"Generating {typeSymbol.Name}...");
 
                     try
                     {
@@ -74,17 +42,17 @@ namespace SaveDataGenerator
                         if (!string.IsNullOrWhiteSpace(code))
                         {
                             context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(code, Encoding.UTF8));
-                            Log($"Generated {typeSymbol.Name}.SaveData.g.cs\n");
+                            Logger.Log($"Generated {typeSymbol.Name}.SaveData.g.cs\n");
                             //Log($"Content:\n{code}");
                         }
                         else
                         {
-                            Log($"Generated empty output for {typeSymbol.Name}");
+                            Logger.Log($"Generated empty output for {typeSymbol.Name}");
                         }
                     }
                     catch (Exception e)
                     {
-                        Log("Exception: " + e.Message);
+                        Logger.Log("Exception: " + e.Message);
                     }
                 }
             }
@@ -101,7 +69,8 @@ namespace SaveDataGenerator
 
                 if (saveDataAttributeDecl != null)
                 {
-                    Log($"*****  Found save data attribute {saveDataAttributeDecl.ToString()}, {saveDataAttributeDecl.Name.ToString()}");
+                    Logger.Log($"*****  Found save data attribute {saveDataAttributeDecl.ToString()}, {saveDataAttributeDecl.Name.ToString()}");
+                    _saveDataAttribute = saveDataAttributeDecl;
                     break;
                 }
             }
@@ -155,6 +124,8 @@ namespace SaveDataGenerator
         private static void CollectTypeContent(IPropertySymbol m, HashSet<string> usings, List<string> dtoFields, List<string> toSaveLines, List<string> applyLines)
         {
             var typeInfo = ResolveType(m.Type, usings);
+
+            
             if (typeInfo.Skip) return;
 
             var dtoPropName = typeInfo.IsConfig ? m.Name + "Id" : m.Name;
@@ -172,7 +143,9 @@ namespace SaveDataGenerator
             {
                 //TODO: add possibility custom selection of collection elements
                 var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!);
-                toSaveLines.Add($"{dtoPropName} = {readExpr}?.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
+                var filter = AttributeHelper.GetSaveDataFilter(m);
+                var filterExpr = filter == null ? string.Empty : $".Where({filter})";
+                toSaveLines.Add($"{dtoPropName} = {readExpr}?{filterExpr}.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
             }
             else
             {
@@ -236,7 +209,7 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsConfig)
             {
-                Log($"Config found {m.Name}, skipping apply.");
+                Logger.Log($"Config found {m.Name}, skipping apply.");
                 return string.Empty;
             }
 
@@ -245,7 +218,7 @@ namespace SaveDataGenerator
                 return $"{modelExpr} = {dataExpr};";
             }
 
-            Log($"Trying to update get-only non reactive property {m.Name}!");
+            Logger.Log($"Trying to update get-only non reactive property {m.Name}!");
             return $"//*** {modelExpr} is get-only. Skip applying.";
         }
 
@@ -342,9 +315,14 @@ namespace SaveDataGenerator
             usings.Add(type.ContainingNamespace?.ToDisplayString());
 
             var info = new TypeInfo();
+            
+            // TODO: filtering
 
             if (type is INamedTypeSymbol named)
             {
+                AttributeHelper.PrintAttributes(named);
+
+                
                 // Проверка на коллекции
                 if (TryResolveCollection(named, usings, out var colInfo))
                 {
@@ -426,7 +404,10 @@ namespace SaveDataGenerator
             named.Name.Contains("Config") || named.ContainingNamespace.ToDisplayString().Contains("Configs");
 
         private static bool HasSaveDataAttribute(ISymbol symbol) =>
-            symbol.GetAttributes().Any(a => a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
+            GetSaveDataAttribute(symbol) != null;
+        
+        private static AttributeData? GetSaveDataAttribute(ISymbol symbol) =>
+            symbol.GetAttributes().FirstOrDefault(a => a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
 
         private class TypeInfo
         {
@@ -435,6 +416,7 @@ namespace SaveDataGenerator
             public bool IsReactive;
             public bool IsNestedSaveData;
             public bool IsCollection;
+            public string Filter;
             public bool Skip;
             public bool IsConfig;
             public TypeInfo? CollectionElementType;
