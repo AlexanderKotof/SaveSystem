@@ -4,46 +4,48 @@ using UnityEngine;
 namespace SaveSystem.Example
 {
     [Serializable]
-    public struct SerializableGuid : ISerializationCallbackReceiver, IEquatable<Guid>, IEquatable<SerializableGuid>
+    public struct SerializableGuid : IEquatable<Guid>, IEquatable<SerializableGuid>
     {
-        private Guid _id;
+        [SerializeField]
+        private byte[] _serializedId;
+        private Guid? _id;
 
-        public bool IsEmpty => _id == Guid.Empty;
+        public bool IsEmpty => _serializedId.Length == 0 || Value == Guid.Empty;
 
-        [SerializeField, HideInInspector]
-        private string _serializedId;
+        public Guid Value
+        {
+            get
+            {
+                _id ??= new Guid(_serializedId);
+                return _id.Value;
+            }
+        }
 
         public SerializableGuid(Guid guid)
         {
             _id = guid;
-            _serializedId = _id.ToString();
+            _serializedId = guid.ToByteArray();
         }
 
-        public void OnBeforeSerialize()
+        public SerializableGuid(byte[] guid)
         {
-            Debug.Log($"Serializing {_id.ToString()}");
-            _serializedId = _id.ToString();
-        }
-
-        public void OnAfterDeserialize()
-        {
-            _id = Guid.Parse(_serializedId);
-            Debug.Log($"Deserialized {_id.ToString()}");
+            _serializedId = guid;
+            _id = new Guid(_serializedId);
         }
 
         public bool Equals(Guid other)
         {
-            return _id.Equals(other);
+            return Value.Equals(other);
         }
 
         public bool Equals(SerializableGuid other)
         {
-            return _id.Equals(other._id);
+            return Value.Equals(other.Value);
         }
 
         public static implicit operator Guid(SerializableGuid serializableGuid)
         {
-            return serializableGuid._id;
+            return serializableGuid.Value;
         }
     }
 }

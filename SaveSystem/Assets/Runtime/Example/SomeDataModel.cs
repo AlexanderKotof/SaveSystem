@@ -1,31 +1,56 @@
-using System;
 using SaveSystem.Attributes;
-using SaveSystem.Interfaces;
+using UniRx;
 using UnityEngine;
 using UnityEngine.Serialization;
 
 namespace SaveSystem.Example
 {
+
+    [SaveData]
+    public class GameDataModel
+    {
+        [SaveData]
+        public SomeDataModel SomeDataModel { get; }
+
+        // ...
+    }
+
     [SaveData]
     public class SomeDataModel
     {
+        [SaveData]
+        public ReactiveProperty<int> Health { get; } = new ();
 
+        [SaveData]
+        public ReactiveCollection<GameConfigBase> Configs { get; } = new ReactiveCollection<GameConfigBase>();
+
+        // ...
     }
 
-    public class GameConfigBase : ScriptableObject, IHasId
+    public class SaveSystemExample
     {
-        public Guid Id => _guid;
-
-        private SerializableGuid _guid;
-
-        private void OnValidate()
+        public void Save(GameDataModel model)
         {
-            if (_guid.IsEmpty)
-            {
-                _guid = new SerializableGuid(Guid.NewGuid());
-            }
+            var dto = model.ToSaveData();
+
+            // serialize it as you want
+
+            // write to file, send to server, etc.
+
+            Debug.Log($"Data written:\n {JsonUtility.ToJson(dto)}");
         }
 
-        // Some base config
+        public void Load(string json, GameDataModel model)
+        {
+            var dto = JsonUtility.FromJson<GameDataModelSaveData>(json);
+
+
+            // applying data from dto
+
+            model.ApplySaveData(dto);
+
+
+            Debug.Log($"Data read:\n {dto}");
+        }
     }
 }

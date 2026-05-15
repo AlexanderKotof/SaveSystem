@@ -6,9 +6,4 @@ namespace SaveSystem.Interfaces
     {
         Guid Id { get; }
     }
-
-    public interface ISaveData
-    {
-        
-    }
 }
