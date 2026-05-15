@@ -126,7 +126,7 @@ namespace SaveDataGenerator
 
             if (typeInfo.Skip) return;
 
-            var dtoPropName = typeInfo.IsConfig ? m.Name + "Id" : m.Name;
+            var dtoPropName = typeInfo.HasId ? m.Name + "Id" : m.Name;
 
             // 1. Поле в DTO
             dtoFields.Add($"public {typeInfo.DtoTypeName} {dtoPropName} {{ get; set; }}");
@@ -134,7 +134,7 @@ namespace SaveDataGenerator
             // 2. ToSaveData
             string readExpr = $"model.{m.Name}";
             if (typeInfo.IsReactive) readExpr += ".Value";
-            if (typeInfo.IsConfig) readExpr += ".Id";
+            if (typeInfo.HasId) readExpr += ".Id";
             if (typeInfo.IsNestedSaveData) readExpr += ".ToSaveData()";
 
             if (typeInfo.IsCollection)
@@ -161,7 +161,7 @@ namespace SaveDataGenerator
         {
             if (info.IsNestedSaveData) return "x.ToSaveData()";
             if (info.IsReactive) return "x.Value";
-            if (info.IsConfig) return "x.Id";
+            if (info.HasId) return "x.Id";
             return "x";
         }
 
@@ -204,7 +204,7 @@ namespace SaveDataGenerator
                 return $"{modelExpr}.Value = {dataExpr};";
             }
 
-            if (typeInfo.IsConfig)
+            if (typeInfo.HasId)
             {
                 Logger.Log($"Config found {m.Name}, skipping apply.");
                 return string.Empty;
@@ -347,10 +347,10 @@ namespace SaveDataGenerator
                 }
                 
                 // Проверка на Config
-                if (IsConfig(named))
+                if (IsHasId(named))
                 {
-                    info.IsConfig = true;
-                    info.DtoTypeName = "string";
+                    info.HasId = true;
+                    info.DtoTypeName = "Guid";
                     info.ModelTypeName = named.ToDisplayString();
                     return info;
                 }
@@ -396,8 +396,8 @@ namespace SaveDataGenerator
             return true;
         }
 
-        private static bool IsConfig(INamedTypeSymbol named) =>
-            named.Name.Contains("Config") || named.ContainingNamespace.ToDisplayString().Contains("Configs");
+        private static bool IsHasId(INamedTypeSymbol named) =>
+            named.AllInterfaces.Any(i => i.Name == "IHasId");
 
         private static bool HasSaveDataAttribute(ISymbol symbol) =>
             GetSaveDataAttribute(symbol) != null;
@@ -414,7 +414,7 @@ namespace SaveDataGenerator
             public bool IsCollection;
             public string Filter;
             public bool Skip;
-            public bool IsConfig;
+            public bool HasId;
             public TypeInfo? CollectionElementType;
 
             public static TypeInfo SkipType() => new() { Skip = true };
