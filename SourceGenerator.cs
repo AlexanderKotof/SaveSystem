@@ -10,7 +10,6 @@ using System.Text;
 namespace SaveDataGenerator
 {
     [Generator]
-    [SuppressMessage("ReSharper", "ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract")]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
         private AttributeSyntax? _saveDataAttribute;
@@ -125,7 +124,6 @@ namespace SaveDataGenerator
         {
             var typeInfo = ResolveType(m.Type, usings);
 
-            
             if (typeInfo.Skip) return;
 
             var dtoPropName = typeInfo.IsConfig ? m.Name + "Id" : m.Name;
@@ -141,7 +139,6 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsCollection)
             {
-                //TODO: add possibility custom selection of collection elements
                 var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!);
                 var filter = AttributeHelper.GetSaveDataFilter(m);
                 var filterExpr = filter == null ? string.Empty : $".Where({filter})";
@@ -283,8 +280,7 @@ namespace SaveDataGenerator
 
             return sb.ToString();
         }
-        
-        // ✅ Заменена уязвимая логика вырезания неймспейсов
+
         private static string GetShortTypeName(ITypeSymbol type, HashSet<string> usings)
         {
             if (type == null) return "object";
