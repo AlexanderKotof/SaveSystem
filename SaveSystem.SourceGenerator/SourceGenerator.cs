@@ -123,36 +123,35 @@ namespace SaveDataGenerator
         private static void CollectTypeContent(IPropertySymbol m, HashSet<string> usings, List<string> dtoFields, List<string> toSaveLines, List<string> applyLines)
         {
             var selector = AttributeHelper.GetSaveDataSelector(m);
-            var typeInfo = ResolveType(m.Type, usings, selector);
+            var typeInfo = ResolveType(m.Type, usings, selector); // 🔹 Передаём селектор
 
             if (typeInfo.Skip) return;
 
             var dtoPropName = m.Name;
             dtoFields.Add($"public {typeInfo.DtoTypeName} {dtoPropName} {{ get; set; }}");
 
-            // 1. ToSaveData
+            // ToSaveData
             string readExpr = $"model.{m.Name}";
             if (typeInfo.IsReactive) readExpr += ".Value";
             if (typeInfo.IsNestedSaveData) readExpr += ".ToSaveData()";
 
             if (typeInfo.IsCollection)
             {
-                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector);
+                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector); // 🔹 selector передаётся
                 var filter = AttributeHelper.GetSaveDataFilter(m);
                 var filterExpr = filter == null ? string.Empty : $".Where({filter})";
 
+                // 🔹 Убрали дублирующий .Select(x => x.{selector}) — теперь это в elemMap
                 toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
             }
             else
             {
-                if (typeInfo.HasSelector && selector != null)
-                {
-                    readExpr += $".{selector}";
-                }
+                // Для не-коллекций: если селектор есть, но тип уже разрешён через свойство (HasSelector), не добавляем .{selector} повторно
+                if (selector != null && !typeInfo.HasSelector) readExpr += $".{selector}";
                 toSaveLines.Add($"{dtoPropName} = {readExpr}");
             }
 
-            // 2. ApplySaveData
+            // ApplySaveData
             var writeExpr = GetWriteExpression(m, typeInfo, dtoPropName);
             if (!string.IsNullOrEmpty(writeExpr))
             {
@@ -162,7 +161,7 @@ namespace SaveDataGenerator
 
         private static string GetElementMapExpr(TypeInfo info, string? selector)
         {
-            if (!string.IsNullOrEmpty(selector)) return $"x.{selector}";
+            if (!string.IsNullOrEmpty(selector)) return $"x.{selector}"; // 🔹 Селектор в приоритете
             if (info.IsNestedSaveData) return "x.ToSaveData()";
             if (info.IsReactive) return "x.Value";
             return "x";
@@ -170,12 +169,6 @@ namespace SaveDataGenerator
 
         private static string GetWriteExpression(IPropertySymbol m, TypeInfo typeInfo, string dtoPropName)
         {
-            // 🔹 Восстановление для Select не поддерживается автоматически (требуется контекст родителя)
-            if (typeInfo.HasSelector)
-            {
-                return $"//*** {m.Name} uses Select attribute. Auto-restore skipped.";
-            }
-
             var modelExpr = $"model.{m.Name}";
             var dataExpr = $"data.{dtoPropName}";
 
@@ -194,6 +187,12 @@ namespace SaveDataGenerator
                 return $"{modelExpr}.Value = {dataExpr};";
             }
 
+            // 🔹 Поля с селектором нельзя автоматически восстановить
+            if (typeInfo.HasSelector)
+            {
+                return $"//*** {m.Name} uses Select attribute. Auto-restore skipped.";
+            }
+
             if (m.SetMethod is { DeclaredAccessibility: Accessibility.Public })
             {
                 return $"{modelExpr} = {dataExpr};";
@@ -202,6 +201,7 @@ namespace SaveDataGenerator
             Logger.Log($"Trying to update get-only non reactive property {m.Name}!");
             return $"//*** {modelExpr} is get-only. Skip applying.";
         }
+
         // =========================
         // OUTPUT GENERATION
         // =========================
@@ -289,53 +289,34 @@ namespace SaveDataGenerator
             var ns = type.ContainingNamespace?.ToDisplayString();
             if (!string.IsNullOrEmpty(ns)) usings.Add(ns);
 
-            // 🔹 1. Обработка Select, если он указан
-            if (!string.IsNullOrEmpty(selector) && type is INamedTypeSymbol namedType)
-            {
-                // Коллекции: применяем селектор к типу элемента
-                if (TryResolveCollection(namedType, usings, out ITypeSymbol? elementType))
-                {
-                    var elemInfo = ResolveType(elementType, usings, selector);
-                    info.IsCollection = true;
-                    info.CollectionElementType = elemInfo;
-                    info.DtoTypeName = $"{elemInfo.DtoTypeName}[]";
-                    info.ModelTypeName = namedType.ToDisplayString();
-                    return info;
-                }
-                
-                // TODO: проверка на словари
-
-                // Reactive: применяем селектор к внутреннему типу
-                var defName = namedType.OriginalDefinition?.ToDisplayString() ?? string.Empty;
-                if ((defName.Contains("ReactiveProperty") || namedType.Name.Contains("ReactiveProperty")) &&
-                    namedType.TypeArguments.Length > 0)
-                {
-                    var innerType = namedType.TypeArguments[0];
-                    var innerInfo = ResolveType(innerType, usings, selector);
-                    innerInfo.IsReactive = true;
-                    return innerInfo;
-                }
-
-                // Обычный тип: ищем указанное свойство
-                var selectedProp = namedType.GetMembers(selector)
-                    .OfType<IPropertySymbol>()
-                    .FirstOrDefault(p => p.DeclaredAccessibility != Accessibility.Private);
-
-                if (selectedProp != null)
-                {
-                    var innerInfo = ResolveType(selectedProp.Type, usings, null); // Селектор "съеден"
-                    innerInfo.HasSelector = true;
-                    innerInfo.ModelTypeName = namedType.ToDisplayString();
-                    return innerInfo;
-                }
-            }
-
-            // 🔹 2. Стандартная логика (без селектора или если свойство не найдено)
             if (type is INamedTypeSymbol named)
             {
-                if (TryResolveCollection(named, usings, out ITypeSymbol? colElementType))
+                // 🔹 1. Коллекции
+                if (TryResolveCollection(named, usings, out ITypeSymbol? elementType))
                 {
-                    var elemInfo = ResolveType(colElementType, usings, null);
+                    // Если есть селектор — применяем его к типу элемента
+                    if (!string.IsNullOrEmpty(selector))
+                    {
+                        var selectedType = GetPropertyType(elementType, selector);
+
+                        Logger.Log($"Resolving selected type: success= {selectedType != null}");
+
+                        if (selectedType != null)
+                        {
+                            var selectedInfo = ResolveType(selectedType, usings, null);
+                            info.IsCollection = true;
+                            info.CollectionElementType = selectedInfo;
+                            info.DtoTypeName = $"{selectedInfo.DtoTypeName}[]";
+                            info.ModelTypeName = named.ToDisplayString();
+
+
+                            Logger.Log($"Resolved selected type:  ModelTypeName:{info.ModelTypeName}, CollectionElementType:{info.CollectionElementType}, DtoTypeName:{info.DtoTypeName}");
+
+                            return info;
+                        }
+                    }
+
+                    var elemInfo = ResolveType(elementType, usings, null);
                     info.IsCollection = true;
                     info.CollectionElementType = elemInfo;
                     info.DtoTypeName = $"{elemInfo.DtoTypeName}[]";
@@ -343,15 +324,30 @@ namespace SaveDataGenerator
                     return info;
                 }
 
-                var defName2 = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
-                if ((defName2.Contains("ReactiveProperty") || named.Name.Contains("ReactiveProperty")) &&
+                // 🔹 2. ReactiveProperty<T> — проваливаемся внутрь с тем же селектором
+                var defName = named.OriginalDefinition?.ToDisplayString() ?? string.Empty;
+                if ((defName.Contains("ReactiveProperty") || named.Name.Contains("ReactiveProperty")) &&
                     named.TypeArguments.Length > 0)
                 {
-                    var innerInfo = ResolveType(named.TypeArguments[0], usings, null);
-                    innerInfo.IsReactive = true;
-                    return innerInfo;
+                    var inner = ResolveType(named.TypeArguments[0], usings, selector);
+                    inner.IsReactive = true;
+                    return inner;
                 }
 
+                // 🔹 3. Селектор для не-коллекции
+                if (!string.IsNullOrEmpty(selector))
+                {
+                    var selectedType = GetPropertyType(named, selector);
+                    if (selectedType != null)
+                    {
+                        var selectedInfo = ResolveType(selectedType, usings, null);
+                        selectedInfo.HasSelector = true;
+                        selectedInfo.ModelTypeName = named.ToDisplayString();
+                        return selectedInfo;
+                    }
+                }
+
+                // 🔹 4. Вложенный SaveData
                 if (HasSaveDataAttribute(named))
                 {
                     info.IsNestedSaveData = true;
@@ -360,10 +356,58 @@ namespace SaveDataGenerator
                     return info;
                 }
             }
+            // 🔹 5. Массивы
+            else if (type is IArrayTypeSymbol arrayType)
+            {
+                var elementType = arrayType.ElementType;
+                if (!string.IsNullOrEmpty(selector))
+                {
+                    var selectedType = GetPropertyType(elementType, selector);
+                    if (selectedType != null)
+                    {
+                        var selectedInfo = ResolveType(selectedType, usings, null);
+                        info.IsCollection = true;
+                        info.CollectionElementType = selectedInfo;
+                        info.DtoTypeName = $"{selectedInfo.DtoTypeName}[]";
+                        info.ModelTypeName = type.ToDisplayString();
+                        return info;
+                    }
+                }
 
+                var elemInfo = ResolveType(elementType, usings, null);
+                info.IsCollection = true;
+                info.CollectionElementType = elemInfo;
+                info.DtoTypeName = $"{elemInfo.DtoTypeName}[]";
+                info.ModelTypeName = type.ToDisplayString();
+                return info;
+            }
+
+            // 🔹 Примитивы / обычные типы
             info.DtoTypeName = GetShortTypeName(type, usings);
             info.ModelTypeName = type.ToDisplayString();
             return info;
+        }
+
+        // Вспомогательный метод: находит тип свойства по имени
+        private static ITypeSymbol? GetPropertyType(ITypeSymbol type, string propertyName)
+        {
+            var current = type;
+            while (current != null && current.Kind != SymbolKind.ErrorType)
+            {
+                if (current is INamedTypeSymbol named)
+                {
+                    var prop = named.GetMembers(propertyName)
+                        .OfType<IPropertySymbol>()
+                        .FirstOrDefault(p =>
+                            p.DeclaredAccessibility != Accessibility.Private &&
+                            !p.IsStatic);
+
+                    if (prop != null) return prop.Type;
+                }
+                
+                current = current.BaseType;
+            }
+            return null;
         }
 
         private static bool TryResolveCollection(INamedTypeSymbol named, HashSet<string> usings, out ITypeSymbol? elementType)
