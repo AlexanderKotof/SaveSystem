@@ -196,7 +196,7 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsNestedSaveData)
             {
-                return $"//*** Nested Data Exist: {modelExpr}.ApplySaveData({dataExpr}); (Requires manual handling or generated ToModel)";
+                return $"{modelExpr}?.ApplySaveData({dataExpr}); //TODO: check (Requires manual handling or generated ToModel)";
             }
 
             if (typeInfo.IsReactive)
