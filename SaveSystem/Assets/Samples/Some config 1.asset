@@ -14,4 +14,4 @@ MonoBehaviour:
   m_EditorClassIdentifier: SaveSystem.Runtime::SaveSystem.Example.GameConfigBase
   _guid:
     _serializedId: c6cee58b856611418b64e989ef40b9dc
-  someData: 111
+  someData: 42

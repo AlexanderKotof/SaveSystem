@@ -13,7 +13,7 @@ namespace SaveSystem.Example
         private SerializableGuid _guid;
 
         public int someData = 42;
-
+        
 #if UNITY_EDITOR
         private void OnValidate()
         {
