@@ -6,7 +6,7 @@ namespace SaveSystem.Attributes
     /// Attribute marks class, property or field for SaveSystem.SourceGenerator to automatically generate a dto and methods to easily convert to each other.
     /// See: ...
     /// </summary>
-    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Property | AttributeTargets.Field, AllowMultiple = false, Inherited = true)]
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
     public sealed class SaveDataAttribute : Attribute
     {
         /// <summary>

@@ -15,7 +15,7 @@ namespace SaveSystem.Example
         {
             _configsMap = gameConfigs.ToDictionary(v => v.Id, v => v);
             
-            var model = new GameDataModel();
+            var model = new GameDataModelAggregate();
 
             model.SomeDataModel.Health.Value = 100;
             foreach (var config in gameConfigs)
@@ -25,7 +25,7 @@ namespace SaveSystem.Example
             }
 
             var json = Save(model);
-            var model2 = new GameDataModel();
+            var model2 = new GameDataModelAggregate();
 
             Load(json, model2);
 
@@ -34,7 +34,7 @@ namespace SaveSystem.Example
         }
 
 
-        public string Save(GameDataModel model)
+        public string Save(GameDataModelAggregate model)
         {
             // Generated method
             var dto = model.ToSaveData();
@@ -48,9 +48,9 @@ namespace SaveSystem.Example
             return json;
         }
 
-        public void Load(string json, GameDataModel model)
+        public void Load(string json, GameDataModelAggregate model)
         {
-            var dto = JsonUtility.FromJson<GameDataModelSaveData>(json);
+            var dto = JsonUtility.FromJson<GameDataModelAggregateSaveData>(json);
 
             // applying data from dto
 
@@ -61,7 +61,7 @@ namespace SaveSystem.Example
             Debug.Log($"Data read:\n {outputJson}");
         }
 
-        private void ApplyLoadedData(GameDataModel model, GameDataModelSaveData dto)
+        private void ApplyLoadedData(GameDataModelAggregate model, GameDataModelAggregateSaveData dto)
         {
             // Generated method
             model.ApplySaveData(dto);
