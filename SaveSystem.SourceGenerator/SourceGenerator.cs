@@ -177,6 +177,11 @@ namespace SaveDataGenerator
                 return $"//*** Data Collection: {m.Name}";
             }
 
+            if (typeInfo.IsNestedSaveData && typeInfo.IsReactive)
+            {
+                return $"{modelExpr}.Value?.ApplySaveData({dataExpr});";
+            }
+
             if (typeInfo.IsNestedSaveData)
             {
                 return $"{modelExpr}?.ApplySaveData({dataExpr});";
@@ -187,7 +192,6 @@ namespace SaveDataGenerator
                 return $"{modelExpr}.Value = {dataExpr};";
             }
 
-            // 🔹 Поля с селектором нельзя автоматически восстановить
             if (typeInfo.HasSelector)
             {
                 return $"//*** {m.Name} uses Select attribute. Auto-restore skipped.";
@@ -404,7 +408,7 @@ namespace SaveDataGenerator
 
                     if (prop != null) return prop.Type;
                 }
-                
+
                 current = current.BaseType;
             }
             return null;
@@ -429,9 +433,6 @@ namespace SaveDataGenerator
 
             return elementType != null && elementType.Kind != SymbolKind.ErrorType;
         }
-
-        private static bool IsHasId(INamedTypeSymbol named) =>
-            named.AllInterfaces.Any(i => i.Name == "IHasId");
 
         private static bool HasSaveDataAttribute(ISymbol symbol) =>
             GetSaveDataAttribute(symbol) != null;
