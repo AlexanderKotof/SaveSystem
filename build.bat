@@ -19,6 +19,5 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 ) else (
     echo Build completed successfully!
+	exit
 )
-
-pause
