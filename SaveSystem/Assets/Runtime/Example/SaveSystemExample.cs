@@ -39,9 +39,10 @@ namespace SaveSystem.Example
             // Generated method
             var dto = model.ToSaveData();
 
-            // serialize it as you want
+            // TODO: serialize this DTO as you want
+            // Newtonsoft.Json is a industry standard for this purposes
 
-            // write to file, send to server, etc.
+            // Next: write to file, send to server, etc.
 
             var json = JsonUtility.ToJson(dto);
             Debug.Log($"Data written:\n {json}");
@@ -53,7 +54,6 @@ namespace SaveSystem.Example
             var dto = JsonUtility.FromJson<GameDataModelAggregateSaveData>(json);
 
             // applying data from dto
-
             ApplyLoadedData(model, dto);
 
             // re-serialization for test purposes
@@ -64,9 +64,9 @@ namespace SaveSystem.Example
         private void ApplyLoadedData(GameDataModelAggregate model, GameDataModelAggregateSaveData dto)
         {
             // Generated method
+            // Note: not all properties can be automatically resolved, so we should fill them manually
+            // TODO: for auto resolve _objectResolver<T>(x.id) can be implemented, will required some implementation
             model.ApplySaveData(dto);
-
-            //Note: not all properties can be automatically resolved, so we should fill them manually
 
             foreach (var id in dto.SomeDataModel.Configs)
             {
