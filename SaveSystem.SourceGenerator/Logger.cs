@@ -9,7 +9,7 @@ namespace SaveDataGenerator
         {
             try
             {
-                return Path.GetFullPath(Path.Combine("Temp", "Generated", "SourceGen_Debug.log"));
+                return Path.GetFullPath(Path.Combine("Assets", "Generator", "SourceGen_Debug.log"));
             }
             catch
             {
