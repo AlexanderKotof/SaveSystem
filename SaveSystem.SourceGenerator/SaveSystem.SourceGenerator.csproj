@@ -5,7 +5,7 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <IsRoslynComponent>true</IsRoslynComponent>
-        <SaveDataGenerator_EmitLogs>true</SaveDataGenerator_EmitLogs>
+        <SaveDataGenerator_EmitLogs>false</SaveDataGenerator_EmitLogs>
         <SaveDataGenerator_EnableNullchecks>true</SaveDataGenerator_EnableNullchecks>
         <SaveDataGenerator_NullableContext>annotation</SaveDataGenerator_NullableContext>
     </PropertyGroup>

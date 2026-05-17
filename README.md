@@ -102,10 +102,20 @@ build_property.SaveDataGenerator_NullableContext = enable
 
 ## 🚀 Getting Started
 ### 1. Install
-Add the generator package to your Unity project via:
+You can simply add package through the Package Manager window. Press **[+]/Install package from git url...** and insert following:
+```
+https://github.com/AlexanderKotof/SaveSystem.git?path=...
+```
 
-    Git URL in Package Manager
-    .dll reference in Plugins/
+Or just insert next line in ProjectRoot/Packages/manifest.json:
+```json
+{
+	"com.newbeedev.savesystem": "https://github.com/AlexanderKotof/SaveSystem.git?path=...",
+	...
+}
+```
+
+The generator source code is also available, so if you want to customize generator behaviour you will need to clone repository, update and build generator solution. After that will be possible to add updated Package (see [documentation](https:\\somesite.com) from disk.
 
 ### 2. Annotate Your Models
 ```csharp
@@ -215,35 +225,35 @@ private void ApplyLoadedData(GameDataModelAggregate model, GameDataModelAggregat
 ## ⚙️ Configuration Reference
 |Property | Default | Description |
 | ------- | -------- | ----------- |
-| SaveDataGenerator_EmitLogs | true | Enable/disable generator diagnostic logs |
+| SaveDataGenerator_EmitLogs | false | Enable/disable generator diagnostic logs |
 | SaveDataGenerator_EnableNullchecks | true | Inject null-check guards in generated methods |
 | SaveDataGenerator_NullableContext | "enable" | Nullable annotation context: enable, annotations, disable |
 
 Set via:
 
-    .editorconfig
-    Directory.Build.props
-    Project file <PropertyGroup>
+* .editorconfig
+* Directory.Build.props
+* Project file <PropertyGroup>
 
 ---
 
 ## 🗓️ Roadmap
 ### ✅ Current (v0.1)
 
-    Core DTO generation with [SaveData] attributes
-    ReactiveProperty & collection support
-    Filter/Select attributes for advanced mapping
-    Nested model handling with recursive generation
-    Unity-compatible output with null-safety
-    Get-only property handling with safe skip logic
+* Core DTO generation with [SaveData] attributes
+* ReactiveProperty & collection support
+* Filter/Select attributes for advanced mapping
+* Nested model handling with recursive generation
+* Unity-compatible output with null-safety
+* Get-only property handling with safe skip logic
 
 ### 🔜 Planned
 
-    Auto-tests suite for generator output validation and regression testing
-    Auto-resolvers: Configure ID→object resolution patterns for collections via [SaveData(ResolveWith = "MyResolver")]
-    Support for [field: SaveData] on auto-properties and primary constructors
-    Async save/load helpers with progress callbacks
-    JSON schema export for DTOs and validation tools
+* Auto-tests suite for generator output validation and regression testing
+* Auto-resolvers: Configure ID→object resolution patterns for collections via [SaveData(ResolveWith = "MyResolver")]
+* Support for [field: SaveData] on auto-properties and primary constructors
+* Async save/load helpers with progress callbacks
+* JSON schema export for DTOs and validation tools
 
 ---
 
