@@ -104,13 +104,13 @@ build_property.SaveDataGenerator_NullableContext = enable
 ### 1. Install
 You can simply add package through the Package Manager window. Press **[+]/Install package from git url...** and insert following:
 ```
-https://github.com/AlexanderKotof/SaveSystem.git?path=...
+https://github.com/AlexanderKotof/SaveSystem.git?path=/SaveSystem/Assets
 ```
 
 Or just insert next line in ProjectRoot/Packages/manifest.json:
 ```json
 {
-	"com.newbeedev.savesystem": "https://github.com/AlexanderKotof/SaveSystem.git?path=...",
+	"com.newbeedev.save-system-gen": "https://github.com/AlexanderKotof/SaveSystem.git?path=/SaveSystem/Assets",
 	...
 }
 ```
