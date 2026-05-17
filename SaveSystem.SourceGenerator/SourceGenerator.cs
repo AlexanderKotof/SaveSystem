@@ -157,7 +157,7 @@ namespace SaveDataGenerator
 
             if (members.Count == 0) return string.Empty;
 
-            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq" };
+            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq", "UnityEngine" };
             var dtoFields = new List<string>();
             var toSaveLines = new List<string>();
             var applyLines = new List<string>();
@@ -185,21 +185,21 @@ namespace SaveDataGenerator
             // ToSaveData
             string readExpr = $"model.{m.Name}";
             if (typeInfo.IsReactive) readExpr += ".Value";
-            if (typeInfo.IsNestedSaveData) readExpr += $"{n}.ToSaveData()";
+            if (typeInfo.IsNestedSaveData) readExpr += $".ToSaveData()";
 
             if (typeInfo.IsCollection)
             {
-                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector); // 🔹 selector передаётся
+                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector, out var selectRequired);
                 var filter = AttributeHelper.GetSaveDataFilter(m);
                 var filterExpr = filter == null ? string.Empty : $".Where({filter})";
+                var selectorExpr = selectRequired ? $".Select(x => {elemMap})" : string.Empty;
 
-                // 🔹 Убрали дублирующий .Select(x => x.{selector}) — теперь это в elemMap
-                toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
+                toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}{selectorExpr}.ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
             }
             else
             {
                 // Для не-коллекций: если селектор есть, но тип уже разрешён через свойство (HasSelector), не добавляем .{selector} повторно
-                if (selector != null && !typeInfo.HasSelector) readExpr += $"{n}.{selector}";
+                if (selector != null && !typeInfo.HasSelector) readExpr += $".{selector}";
                 toSaveLines.Add($"{dtoPropName} = {readExpr}");
             }
 
@@ -211,11 +211,14 @@ namespace SaveDataGenerator
             }
         }
 
-        private static string GetElementMapExpr(TypeInfo info, string? selector)
+        private static string GetElementMapExpr(TypeInfo info, string? selector, out bool selectRequired)
         {
+            selectRequired = true;
             if (!string.IsNullOrEmpty(selector)) return $"x.{selector}"; // 🔹 Селектор в приоритете
             if (info.IsNestedSaveData) return "x.ToSaveData()";
             if (info.IsReactive) return "x.Value";
+
+            selectRequired = false;
             return "x";
         }
 
@@ -231,12 +234,12 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsNestedSaveData && typeInfo.IsReactive)
             {
-                return $"{modelExpr}.Value{n}.ApplySaveData({dataExpr});";
+                return $"{modelExpr}.Value.ApplySaveData({dataExpr});";
             }
 
             if (typeInfo.IsNestedSaveData)
             {
-                return $"{modelExpr}{n}.ApplySaveData({dataExpr});";
+                return $"{modelExpr}.ApplySaveData({dataExpr});";
             }
 
             if (typeInfo.IsReactive)
@@ -298,7 +301,11 @@ namespace SaveDataGenerator
             // ToSaveData
             sb.AppendLine($"    public static {dtoName} ToSaveData(this {type.Name} model)");
             sb.AppendLine("    {");
-            sb.AppendLine("        if (model == null) return default;");
+            sb.AppendLine(
+@"        if (model == null) {
+              Debug.LogError($""Cannot convert Model {nameof(" + type.Name + @")}: model is null."");
+              return default;
+         }");
             sb.AppendLine($"        return new {dtoName}");
             sb.AppendLine("        {");
             foreach (var l in toSaveLines) sb.AppendLine($"            {l},");
@@ -308,7 +315,11 @@ namespace SaveDataGenerator
             // ApplySaveData
             sb.AppendLine($"    public static void ApplySaveData(this {type.Name} model, {dtoName} data)");
             sb.AppendLine("    {");
-            sb.AppendLine("        if (model == null) return;");
+            sb.AppendLine(
+@"        if (model == null) {
+              Debug.LogError($""Can not apply save data! Model {nameof(" + type.Name + @")} is null."");
+              return;
+         }");
             foreach (var l in applyLines) sb.AppendLine($"        {l}");
             sb.AppendLine("    }");
 

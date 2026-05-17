@@ -5,7 +5,7 @@ namespace SaveDataGenerator
 {
     public static class Logger
     {
-        private static bool _enabled;
+        private static bool _enabled = true;
 
         private static string GetLogPath()
         {
