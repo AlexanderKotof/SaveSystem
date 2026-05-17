@@ -157,7 +157,7 @@ namespace SaveDataGenerator
 
             if (members.Count == 0) return string.Empty;
 
-            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq", "UnityEngine" };
+            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq", "UnityEngine", "SaveSystem.Interfaces" };
             var dtoFields = new List<string>();
             var toSaveLines = new List<string>();
             var applyLines = new List<string>();
