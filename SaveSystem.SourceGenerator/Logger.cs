@@ -5,6 +5,8 @@ namespace SaveDataGenerator
 {
     public static class Logger
     {
+        private static bool _enabled;
+
         private static string GetLogPath()
         {
             try
@@ -19,6 +21,9 @@ namespace SaveDataGenerator
 
         public static void Log(string message)
         {
+            if (!_enabled)
+                return;
+
             try
             {
                 var logPath = GetLogPath();
@@ -33,6 +38,11 @@ namespace SaveDataGenerator
             {
                 Console.WriteLine($"[SaveGen LogFail] {ex.Message} | {message}");
             }
+        }
+
+        public static void Disable()
+        {
+            _enabled = false;
         }
     }
 }

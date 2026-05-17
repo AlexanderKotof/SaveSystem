@@ -5,9 +5,15 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <IsRoslynComponent>true</IsRoslynComponent>
+        <SaveDataGenerator_EmitLogs>true</SaveDataGenerator_EmitLogs>
+        <SaveDataGenerator_EnableNullchecks>true</SaveDataGenerator_EnableNullchecks>
+        <SaveDataGenerator_NullableContext>annotation</SaveDataGenerator_NullableContext>
     </PropertyGroup>
 
     <ItemGroup>
+        <CompilerVisibleProperty Include="SaveDataGenerator_EmitLogs" />
+        <CompilerVisibleProperty Include="SaveDataGenerator_EnableNullchecks" />
+        <CompilerVisibleProperty Include="SaveDataGenerator_NullableContext" />
         <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.1.0" PrivateAssets="all" />
         <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.3.4" PrivateAssets="all" />
     </ItemGroup>
