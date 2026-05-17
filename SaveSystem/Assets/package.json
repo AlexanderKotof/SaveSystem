@@ -1,0 +1,31 @@
+{
+    "name": "com.newbeedev.save-system-gen",
+    "version": "0.1.0",
+    "displayName": "SaveData.SourceGenerator - Automatic & Flexible Model-to-DTO Mapper",
+    "description": "A powerful Roslyn Source Generator for automatic mapping of Unity/C# game models to serialization-ready DTOs (Data Transfer Objects). Eliminate boilerplate code and ensure type-safe, maintainable save/load systems.",
+    "unity": "2022.3",
+    "license": "MIT",
+    "keywords": [
+        "save",
+        "load",
+        "mapping",
+        "serialization"
+    ],
+//    "dependencies": {
+//        "com.annulusgames.lit-motion": "https://github.com/annulusgames/LitMotion.git?path=src/LitMotion/Assets/LitMotion",
+//        "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask"
+//    },
+    "author": {
+	    "name": "Alexander Kotov",
+	    "email": "newbeedevinc@gmail.com",
+        "url": "https://github.com/AlexanderKotof"
+  	},
+    "documentationUrl": "https://github.com/AlexanderKotof/SaveSystem/blob/master/README.md",
+    "samples": [
+        {
+            "displayName": "Saving System Example",
+            "description": "Code examples showing features of the package and how to work with examples.",
+            "path": "Samples~/Examples"
+        }
+    ]
+}
