@@ -6,21 +6,73 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace SaveDataGenerator
 {
+    public record GeneratorConfig
+    {
+        public bool EmitLogs { get; set; } = true;
+        public bool EnableNullchecks { get; set; } = true;
+        public string NullableContext { get; set; } = "enable"; // enable, annotations, disable
+
+        public static GeneratorConfig Load(AnalyzerConfigOptions options)
+        {
+            return new GeneratorConfig
+            {
+                EmitLogs = options.GetBool("build_property.SaveDataGenerator_EmitLogs", true),
+                EnableNullchecks = options.GetBool("build_property.SaveDataGenerator_EnableNullchecks", true),
+                NullableContext = options.GetString("build_property.SaveDataGenerator_NullableContext") ?? "enable"
+            };
+        }
+    }
+
+    // Extension-методы для удобного чтения
+    internal static class AnalyzerConfigOptionsExtensions
+    {
+        public static bool GetBool(this AnalyzerConfigOptions options, string key, bool defaultValue = false)
+            => options.TryGetValue(key, out var val) && bool.TryParse(val, out var result) ? result : defaultValue;
+
+        public static string? GetString(this AnalyzerConfigOptions options, string key)
+            => options.TryGetValue(key, out var val) ? val : null;
+    }
+
     [Generator]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
         private AttributeSyntax? _saveDataAttribute;
+        private static GeneratorConfig _config = default!;
+
+
+        private static char n => _config.EnableNullchecks ? '?' : '\0';
+
         public void Initialize(GeneratorInitializationContext context) { }
 
         public void Execute(GeneratorExecutionContext context)
         {
+            try
+            {
+                _config = GeneratorConfig.Load(context.AnalyzerConfigOptions.GlobalOptions);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Load config exception: {ex}");
+                _config = new();
+            }
+
+            if (!_config.EmitLogs)
+                Logger.Disable(); // см. реализацию ниже
+
+            try
+            {
+                TryFindSaveDataAttribute(context);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Find Save Data attribute exception: {ex}");
+            }
+
             var created = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-
-            TryFindSaveDataAttribute(context);
-
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
                 var semanticModel = context.Compilation.GetSemanticModel(tree);
@@ -105,7 +157,7 @@ namespace SaveDataGenerator
 
             if (members.Count == 0) return string.Empty;
 
-            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq" };
+            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq", "UnityEngine", "SaveSystem.Interfaces" };
             var dtoFields = new List<string>();
             var toSaveLines = new List<string>();
             var applyLines = new List<string>();
@@ -123,7 +175,7 @@ namespace SaveDataGenerator
         private static void CollectTypeContent(IPropertySymbol m, HashSet<string> usings, List<string> dtoFields, List<string> toSaveLines, List<string> applyLines)
         {
             var selector = AttributeHelper.GetSaveDataSelector(m);
-            var typeInfo = ResolveType(m.Type, usings, selector); // 🔹 Передаём селектор
+            var typeInfo = ResolveType(m.Type, usings, selector);
 
             if (typeInfo.Skip) return;
 
@@ -133,16 +185,16 @@ namespace SaveDataGenerator
             // ToSaveData
             string readExpr = $"model.{m.Name}";
             if (typeInfo.IsReactive) readExpr += ".Value";
-            if (typeInfo.IsNestedSaveData) readExpr += ".ToSaveData()";
+            if (typeInfo.IsNestedSaveData) readExpr += $".ToSaveData()";
 
             if (typeInfo.IsCollection)
             {
-                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector); // 🔹 selector передаётся
+                var elemMap = GetElementMapExpr(typeInfo.CollectionElementType!, selector, out var selectRequired);
                 var filter = AttributeHelper.GetSaveDataFilter(m);
                 var filterExpr = filter == null ? string.Empty : $".Where({filter})";
+                var selectorExpr = selectRequired ? $".Select(x => {elemMap})" : string.Empty;
 
-                // 🔹 Убрали дублирующий .Select(x => x.{selector}) — теперь это в elemMap
-                toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}.Select(x => {elemMap}).ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
+                toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}{selectorExpr}.ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
             }
             else
             {
@@ -159,11 +211,14 @@ namespace SaveDataGenerator
             }
         }
 
-        private static string GetElementMapExpr(TypeInfo info, string? selector)
+        private static string GetElementMapExpr(TypeInfo info, string? selector, out bool selectRequired)
         {
+            selectRequired = true;
             if (!string.IsNullOrEmpty(selector)) return $"x.{selector}"; // 🔹 Селектор в приоритете
             if (info.IsNestedSaveData) return "x.ToSaveData()";
             if (info.IsReactive) return "x.Value";
+
+            selectRequired = false;
             return "x";
         }
 
@@ -179,12 +234,12 @@ namespace SaveDataGenerator
 
             if (typeInfo.IsNestedSaveData && typeInfo.IsReactive)
             {
-                return $"{modelExpr}.Value?.ApplySaveData({dataExpr});";
+                return $"{modelExpr}.Value.ApplySaveData({dataExpr});";
             }
 
             if (typeInfo.IsNestedSaveData)
             {
-                return $"{modelExpr}?.ApplySaveData({dataExpr});";
+                return $"{modelExpr}.ApplySaveData({dataExpr});";
             }
 
             if (typeInfo.IsReactive)
@@ -214,7 +269,14 @@ namespace SaveDataGenerator
         {
             var sb = new StringBuilder();
             sb.AppendLine("// <auto-generated/>");
+            sb.AppendLine("// *** This file is auto-generated by SaveSystem.SourceGenerator ***");
             sb.AppendLine();
+
+            if (_config.EnableNullchecks)
+            {
+                sb.AppendLine($"#nullable {_config.NullableContext}");
+                sb.AppendLine();
+            }
 
             foreach (var u in usings.OrderBy(x => x))
                 sb.AppendLine($"using {u};");
@@ -228,33 +290,41 @@ namespace SaveDataGenerator
                 sb.AppendLine("{");
             }
 
-            sb.AppendLine("[Serializable]");
-            sb.AppendLine($"public struct {dtoName} : ISaveData");
-            sb.AppendLine("{");
-            foreach (var f in dtoFields) sb.AppendLine($"    {f}");
-            sb.AppendLine("}");
+            sb.AppendLine("    [Serializable]");
+            sb.AppendLine($"    public struct {dtoName} : ISaveData");
+            sb.AppendLine("    {");
+            foreach (var f in dtoFields) sb.AppendLine($"        {f}");
+            sb.AppendLine("    }");
 
-            sb.AppendLine($"public static class {type.Name}SaveExtensions");
-            sb.AppendLine("{");
+            sb.AppendLine($"    public static class {type.Name}SaveExtensions");
+            sb.AppendLine("    {");
 
             // ToSaveData
-            sb.AppendLine($"    public static {dtoName} ToSaveData(this {type.Name} model)");
-            sb.AppendLine("    {");
-            sb.AppendLine("        if (model == null) return default;");
-            sb.AppendLine($"        return new {dtoName}");
+            sb.AppendLine($"        public static {dtoName} ToSaveData(this {type.Name} model)");
             sb.AppendLine("        {");
-            foreach (var l in toSaveLines) sb.AppendLine($"            {l},");
-            sb.AppendLine("        };");
-            sb.AppendLine("    }");
+            sb.AppendLine(
+@"            if (model == null) {
+                  Debug.LogError($""Cannot convert Model {nameof(" + type.Name + @")}: model is null."");
+                  return default;
+             }");
+            sb.AppendLine($"            return new {dtoName}");
+            sb.AppendLine("            {");
+            foreach (var l in toSaveLines) sb.AppendLine($"                {l},");
+            sb.AppendLine("            };");
+            sb.AppendLine("        }");
 
             // ApplySaveData
-            sb.AppendLine($"    public static void ApplySaveData(this {type.Name} model, {dtoName} data)");
-            sb.AppendLine("    {");
-            sb.AppendLine("        if (model == null) return;");
-            foreach (var l in applyLines) sb.AppendLine($"        {l}");
-            sb.AppendLine("    }");
+            sb.AppendLine($"        public static void ApplySaveData(this {type.Name} model, {dtoName} data)");
+            sb.AppendLine("        {");
+            sb.AppendLine(
+@"            if (model == null) {
+                  Debug.LogError($""Can not apply save data! Model {nameof(" + type.Name + @")} is null."");
+                  return;
+         }");
+            foreach (var l in applyLines) sb.AppendLine($"            {l}");
+            sb.AppendLine("        }");
 
-            sb.AppendLine("}");
+            sb.AppendLine("    }");
             if (ns != null) sb.AppendLine("}");
             sb.AppendLine("#pragma warning restore");
 

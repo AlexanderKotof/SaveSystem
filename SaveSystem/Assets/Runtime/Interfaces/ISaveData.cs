@@ -1,7 +1,7 @@
-namespace SaveSystem.Example
+namespace SaveSystem.Interfaces
 {
-    public interface ISaveData
-    {
-
-    }
+    /// <summary>
+    /// Interface for saved data structure
+    /// </summary>
+    public interface ISaveData { }
 }
