@@ -3,48 +3,21 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
-using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace SaveDataGenerator
 {
-    public record GeneratorConfig
-    {
-        public bool EmitLogs { get; set; } = false;
-        public bool EnableNullchecks { get; set; } = true;
-        public string NullableContext { get; set; } = "enable"; // enable, annotations, disable
-
-        public static GeneratorConfig Load(AnalyzerConfigOptions options)
-        {
-            return new GeneratorConfig
-            {
-                EmitLogs = options.GetBool("build_property.SaveDataGenerator_EmitLogs"),
-                EnableNullchecks = options.GetBool("build_property.SaveDataGenerator_EnableNullchecks"),
-                NullableContext = options.GetString("build_property.SaveDataGenerator_NullableContext") ?? "enable"
-            };
-        }
-    }
-
-    // Extension-методы для удобного чтения
-    internal static class AnalyzerConfigOptionsExtensions
-    {
-        public static bool GetBool(this AnalyzerConfigOptions options, string key, bool defaultValue = false)
-            => options.TryGetValue(key, out var val) && bool.TryParse(val, out var result) ? result : defaultValue;
-
-        public static string? GetString(this AnalyzerConfigOptions options, string key)
-            => options.TryGetValue(key, out var val) ? val : null;
-    }
-
     [Generator]
     public class SaveDataSourceGenerator : ISourceGenerator
     {
         private AttributeSyntax? _saveDataAttribute;
         private static GeneratorConfig _config = default!;
 
-
-        private static char n => _config.EnableNullchecks ? '?' : '\0';
+        private static bool NullableEnabled => _config.EnableNullchecks;
+        private static string n => NullableEnabled ? "?" : String.Empty;
 
         public void Initialize(GeneratorInitializationContext context) { }
 
@@ -60,8 +33,11 @@ namespace SaveDataGenerator
                 _config = new();
             }
 
+            var stopwatch = Stopwatch.StartNew();
+            Logger.Log("*** Begin source code generation ***");
+
             if (!_config.EmitLogs)
-                Logger.Disable(); // см. реализацию ниже
+                Logger.Disable();
 
             try
             {
@@ -69,7 +45,7 @@ namespace SaveDataGenerator
             }
             catch (Exception ex)
             {
-                Logger.Log($"Find Save Data attribute exception: {ex}");
+                Logger.Log($"Save Data attribute not found: {ex}");
             }
 
             var created = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
@@ -94,7 +70,6 @@ namespace SaveDataGenerator
                         {
                             context.AddSource($"{typeSymbol.Name}.SaveData.g.cs", SourceText.From(code, Encoding.UTF8));
                             Logger.Log($"Generated {typeSymbol.Name}.SaveData.g.cs\n");
-                            //Log($"Content:\n{code}");
                         }
                         else
                         {
@@ -107,15 +82,15 @@ namespace SaveDataGenerator
                     }
                 }
             }
+
+            Logger.Log($"*** End source code generation, elapsed {stopwatch.Elapsed.TotalMilliseconds}ms ***");
         }
 
         private void TryFindSaveDataAttribute(GeneratorExecutionContext context)
         {
-            AttributeSyntax? saveDataAttributeDecl;
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
-                //TODO: find SaveDataAttribute first
-                saveDataAttributeDecl = tree.GetRoot().DescendantNodes().OfType<AttributeSyntax>()
+                var saveDataAttributeDecl = tree.GetRoot().DescendantNodes().OfType<AttributeSyntax>()
                     .FirstOrDefault(s => s.Name.ToString().Contains("SaveData"));
 
                 if (saveDataAttributeDecl != null)
@@ -140,13 +115,13 @@ namespace SaveDataGenerator
                 .OfType<IPropertySymbol>()
                 .Where(HasSaveDataAttribute)
                 .ToList();
-            
-            //TODO:
+
+            // TODO: add fields support later
             // members.AddRange(type.GetMembers()
             //     .OfType<IFieldSymbol>()
             //     .Where(HasSaveDataAttribute));
 
-            //Collecting props from parent types
+            // Collect props from parent types
             var iterate = type;
             while (iterate.BaseType != null)
             {
@@ -157,7 +132,14 @@ namespace SaveDataGenerator
 
             if (members.Count == 0) return string.Empty;
 
-            var usings = new HashSet<string> { "System", "System.Collections.Generic", "System.Linq", "UnityEngine", "SaveSystem.Interfaces" };
+            var usings = new HashSet<string>
+            {
+                "System",
+                "System.Collections.Generic",
+                "System.Linq",
+                "UnityEngine",
+                "SaveSystem.Interfaces"
+            };
             var dtoFields = new List<string>();
             var toSaveLines = new List<string>();
             var applyLines = new List<string>();
@@ -185,7 +167,9 @@ namespace SaveDataGenerator
             // ToSaveData
             string readExpr = $"model.{m.Name}";
             if (typeInfo.IsReactive) readExpr += ".Value";
-            if (typeInfo.IsNestedSaveData) readExpr += $".ToSaveData()";
+
+            // If it is nested data, but not selected
+            if (typeInfo.IsNestedSaveData && !typeInfo.HasSelector) readExpr += ".ToSaveData()";
 
             if (typeInfo.IsCollection)
             {
@@ -194,12 +178,13 @@ namespace SaveDataGenerator
                 var filterExpr = filter == null ? string.Empty : $".Where({filter})";
                 var selectorExpr = selectRequired ? $".Select(x => {elemMap})" : string.Empty;
 
-                toSaveLines.Add($"{dtoPropName} = {readExpr}{filterExpr}{selectorExpr}.ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()");
+                var saveLine = $"{dtoPropName} = {readExpr}{n}{filterExpr}{selectorExpr}{(NullableEnabled ? $".ToArray() ?? Array.Empty<{typeInfo.CollectionElementType!.DtoTypeName}>()" : ".ToArray()")}";
+                toSaveLines.Add(saveLine);
             }
             else
             {
                 // Для не-коллекций: если селектор есть, но тип уже разрешён через свойство (HasSelector), не добавляем .{selector} повторно
-                if (selector != null && !typeInfo.HasSelector) readExpr += $".{selector}";
+                if (selector != null) readExpr += $".{selector}";
                 toSaveLines.Add($"{dtoPropName} = {readExpr}");
             }
 
@@ -304,9 +289,10 @@ namespace SaveDataGenerator
             sb.AppendLine("        {");
             sb.AppendLine(
 @"            if (model == null) {
-                  Debug.LogError($""Cannot convert Model {nameof(" + type.Name + @")}: model is null."");
-                  return default;
-             }");
+                Debug.LogError($""Cannot convert Model {nameof(" + type.Name + @")}: model is null."");
+                return default;
+            }");
+            sb.AppendLine();
             sb.AppendLine($"            return new {dtoName}");
             sb.AppendLine("            {");
             foreach (var l in toSaveLines) sb.AppendLine($"                {l},");
@@ -318,14 +304,16 @@ namespace SaveDataGenerator
             sb.AppendLine("        {");
             sb.AppendLine(
 @"            if (model == null) {
-                  Debug.LogError($""Can not apply save data! Model {nameof(" + type.Name + @")} is null."");
-                  return;
-         }");
+                Debug.LogError($""Can not apply save data! Model {nameof(" + type.Name + @")} is null."");
+                return;
+            }");
+            sb.AppendLine();
             foreach (var l in applyLines) sb.AppendLine($"            {l}");
             sb.AppendLine("        }");
 
             sb.AppendLine("    }");
             if (ns != null) sb.AppendLine("}");
+            sb.AppendLine();
             sb.AppendLine("#pragma warning restore");
 
             return sb.ToString();
@@ -350,7 +338,7 @@ namespace SaveDataGenerator
             }
             return type.Name;
         }
-        
+
         // =========================
         // TYPE RESOLUTION & SHORT NAMES
         // =========================
@@ -415,7 +403,7 @@ namespace SaveDataGenerator
                     if (selectedType != null)
                     {
                         var selectedInfo = ResolveType(selectedType, usings, null);
-                        selectedInfo.HasSelector = true;
+                        selectedInfo.Selector = selector;
                         selectedInfo.ModelTypeName = named.ToDisplayString();
                         return selectedInfo;
                     }
@@ -506,7 +494,7 @@ namespace SaveDataGenerator
 
         private static bool HasSaveDataAttribute(ISymbol symbol) =>
             GetSaveDataAttribute(symbol) != null;
-        
+
         private static AttributeData? GetSaveDataAttribute(ISymbol symbol) =>
             symbol.GetAttributes().FirstOrDefault(a => a.AttributeClass?.Name is "SaveData" or "SaveDataAttribute");
 
@@ -517,7 +505,8 @@ namespace SaveDataGenerator
             public bool IsReactive;
             public bool IsNestedSaveData;
             public bool IsCollection;
-            public bool HasSelector;
+            public string Selector = string.Empty;
+            public bool HasSelector => !string.IsNullOrEmpty(Selector);
             public bool Skip;
             public TypeInfo? CollectionElementType;
 

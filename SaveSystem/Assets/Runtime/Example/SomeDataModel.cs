@@ -19,6 +19,9 @@ namespace SaveSystem.Example
         [SaveData]
         public ReactiveProperty<AnotherModel> ModelInReactiveProperty { get; } = new();
 
+        [SaveData(Select = "Id")]
+        public AnotherModel SaveModelIdOnly { get; }
+
         public float a;
         // ...
     }
@@ -36,6 +39,9 @@ namespace SaveSystem.Example
     {
         [SaveData]
         public SerializableData SerializableData { get; set; } = new();
+
+        [SaveData]
+        public int Id { get; }
     }
 
     /// <summary>
