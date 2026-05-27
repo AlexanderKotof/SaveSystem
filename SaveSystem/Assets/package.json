@@ -1,6 +1,6 @@
 {
     "name": "com.newbeedev.save-system-gen",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "displayName": "SaveData.SourceGenerator - Automatic & Flexible Model-to-DTO Mapper",
     "description": "A powerful Roslyn Source Generator for automatic mapping of Unity/C# game models to serialization-ready DTOs (Data Transfer Objects). Eliminate boilerplate code and ensure type-safe, maintainable save/load systems.",
     "unity": "2022.3",

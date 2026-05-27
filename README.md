@@ -1,6 +1,6 @@
 # SaveSystem.SourceGenerator
 
-![Version](https://img.shields.io/badge/version-0.2-blue) ![Unity](https://img.shields.io/badge/Unity-2021.3+-black) ![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-1.0-blue) ![Unity](https://img.shields.io/badge/Unity-2021.3+-black) ![License](https://img.shields.io/badge/license-MIT-green)
 
 A flexible Roslyn Source Generator for automatic mapping of complex Unity/C# game models to serialization-ready DTOs (Data Transfer Objects). Eliminate boilerplate code and ensure type-safe, maintainable save/load systems.
 
@@ -115,7 +115,7 @@ Or just insert next line in ProjectRoot/Packages/manifest.json:
 }
 ```
 
-The generator source code is also available, so if you want to customize generator behaviour you will need to clone repository, update and build generator solution. After that will be possible to add updated Package (see [documentation](https:\\somesite.com) from disk.
+The generator source code is also available, so if you want to customize generator behaviour you will need to clone repository, update and build generator solution. After that will be possible to add updated Package from disk (see [documentation](https://docs.unity3d.com/6000.3/Documentation/Manual/upm-ui-local.html).
 
 ### 2. Annotate Your Models
 ```csharp
@@ -238,7 +238,7 @@ Set via:
 ---
 
 ## 🗓️ Roadmap
-### ✅ Current (v0.1)
+### ✅ Current (v1.0)
 
 * Core DTO generation with [SaveData] attributes
 * ReactiveProperty & collection support
